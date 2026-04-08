@@ -204,12 +204,18 @@ function drawShape(ctx, style, type, x, y, size, fill, rot, opacity, font, text,
       }
       ctx.drawImage(toff, x+jx - toff.width/2, y+jy - toff.height/2);
     } else {
-      applyRiso(ctx, x+jx, y+jy, s/2*Math.max(scx,scy), displayFill, nextPt, nextR, null, {bristle,erosion,spread,bridge});
+      const _isStrokeOnly = type==='line'||type==='arc'||type==='curve'||type==='cross';
+      if (!_isStrokeOnly && !noFill) {
+        applyRiso(ctx, x+jx, y+jy, s/2*Math.max(scx,scy), displayFill, nextPt, nextR, null, {bristle,erosion,spread,bridge});
+        return;
+      }
+      // stroke-only or noFill: fall through to normal rendering
     }
     return;
   }
   if (dither && !riso) {
-    applyDither(_nodesCtx, x+jx, y+jy, Math.max(1,size+js), displayFill, type, rot+jr, (sx||100)/100, (sy||100)/100, dither);
+    applyDither(_nodesCtx, x+jx, y+jy, Math.max(1,size+js), displayFill, type, rot+jr, (sx||100)/100, (sy||100)/100,
+      Object.assign({}, dither, {noFill: !!noFill, noStroke: !!noStroke, sw: sw||0}));
     return;
   }
   ctx.save();
@@ -716,8 +722,8 @@ function updatePanel() {
     });
     sv('node-fill', n.fill||'#c8b8a2'); sv('node-stroke-color', n.strokeColor||'#1a1a1a');
     sv('node-sw', n.strokeWidth||0); tv('node-sw-val', n.strokeWidth||0);
-    document.getElementById('node-no-fill').checked = !!n.noFill;
-    document.getElementById('node-no-stroke').checked = !!n.noStroke;
+    document.getElementById('node-no-fill').checked = !n.noFill;
+    document.getElementById('node-no-stroke').checked = !n.noStroke;
     sv('node-size', n.size||16); tv('node-size-val', n.size||16);
     if (n.sizeEnd === undefined) n.sizeEnd = n.size || 16;
     sv('node-size-end', n.sizeEnd); tv('node-size-end-val', n.sizeEnd!==undefined?n.sizeEnd:n.size||16);
@@ -813,8 +819,8 @@ bSel('node-type',v=>{const n=gN();if(n)n.type=v;});
 bCol('node-fill',v=>{const n=gN();if(n)n.fill=v;});
 bCol('node-stroke-color',v=>{const n=gN();if(n)n.strokeColor=v;});
 bR('node-sw','node-sw-val',null,v=>{const n=gN();if(n)n.strokeWidth=v;});
-bC('node-no-fill',v=>{const n=gN();if(n)n.noFill=v;});
-bC('node-no-stroke',v=>{const n=gN();if(n)n.noStroke=v;});
+bC('node-no-fill',v=>{const n=gN();if(n)n.noFill=!v;});
+bC('node-no-stroke',v=>{const n=gN();if(n)n.noStroke=!v;});
 bR('node-size','node-size-val',null,v=>{
   const n=gN();if(!n)return;
   // sync sizeEnd if it was equal to size (user hasn't diverged them)
@@ -968,13 +974,21 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
   const cxo = ow / 2, cyo = oh / 2;
   oc.save();
   oc.translate(cxo, cyo); oc.rotate(rot); oc.scale(scx, scy);
-  oc.fillStyle = '#000'; oc.strokeStyle = '#000';
+  const _dNoFill = !!opts.noFill, _dNoStroke = !!opts.noStroke;
+  const _dSw = opts.sw > 0 ? opts.sw : (opts.strokeWidth || 1.5);
+  oc.fillStyle = '#000'; oc.strokeStyle = '#000'; oc.lineWidth = _dSw;
   if (type === 'circle') {
-    oc.beginPath(); oc.arc(0,0,size/2,0,Math.PI*2); oc.fill();
+    oc.beginPath(); oc.arc(0,0,size/2,0,Math.PI*2);
+    if (!_dNoFill) oc.fill();
+    if (!_dNoStroke && opts.sw > 0) oc.stroke();
   } else if (type === 'rect') {
-    oc.fillRect(-size/2,-size/2,size,size);
+    oc.beginPath(); oc.rect(-size/2,-size/2,size,size);
+    if (!_dNoFill) oc.fill();
+    if (!_dNoStroke && opts.sw > 0) oc.stroke();
   } else if (type === 'triangle') {
-    oc.beginPath(); oc.moveTo(0,-size/2); oc.lineTo(size/2,size/2); oc.lineTo(-size/2,size/2); oc.closePath(); oc.fill();
+    oc.beginPath(); oc.moveTo(0,-size/2); oc.lineTo(size/2,size/2); oc.lineTo(-size/2,size/2); oc.closePath();
+    if (!_dNoFill) oc.fill();
+    if (!_dNoStroke && opts.sw > 0) oc.stroke();
   } else if (type === 'line') {
     const ll = (opts.lineLen !== undefined ? opts.lineLen : 100) / 2;
     oc.lineWidth = opts.strokeWidth || 1.5;
@@ -1067,7 +1081,10 @@ bR('riso-bridge','riso-bridge-val',null,v=>{const n=gN();if(n)n.risoBridge=v;});
 document.getElementById('node-dither').addEventListener('change', e => {
   const n = gN(); if (!n) return;
   n.dither = e.target.checked;
-  updatePanel();
+  const dp = document.getElementById('dither-params');
+  dp.style.display = n.dither ? 'block' : 'none';
+  document.getElementById('dither-img-mode-row').style.display = n.dither ? 'block' : 'none';
+  if (n.dither) document.getElementById('dither-img-mode').value = n.ditherImgMode || 'bayer';
   paper.view.draw();
 });
 bR('dither-dot','dither-dot-val',null,v=>{const n=gN();if(n)n.ditherDot=v;});
