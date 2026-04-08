@@ -207,15 +207,65 @@ function drawShape(ctx, style, type, x, y, size, fill, rot, opacity, font, text,
       const _isStrokeOnly = type==='line'||type==='arc'||type==='curve'||type==='cross';
       if (!_isStrokeOnly && !noFill) {
         applyRiso(ctx, x+jx, y+jy, s/2*Math.max(scx,scy), displayFill, nextPt, nextR, null, {bristle,erosion,spread,bridge});
-        return;
+      } else {
+        // riso ink effect for stroke-only and noFill shapes
+        const _rsw = sw || 1.5;
+        const _rll = lineLen !== undefined ? lineLen : 100;
+        const _rcv = curvature !== undefined ? curvature : 50;
+        const _rdim = Math.ceil(Math.max(s * Math.max(scx,scy), _rll * scx) * 2 + _rsw * 6 + 20);
+        const _roff = document.createElement('canvas');
+        _roff.width = _rdim; _roff.height = _rdim;
+        const _roc = _roff.getContext('2d');
+        _roc.save();
+        _roc.translate(_rdim/2, _rdim/2); _roc.rotate(rot+jr); _roc.scale(scx, scy);
+        _roc.strokeStyle = '#000'; _roc.fillStyle = '#000';
+        if (type === 'line') {
+          _roc.lineWidth = _rsw * 1.8; _roc.beginPath(); _roc.moveTo(-_rll/2,0); _roc.lineTo(_rll/2,0); _roc.stroke();
+        } else if (type === 'arc') {
+          const _bend = (_rcv/100)*(_rll/2);
+          _roc.lineWidth = _rsw * 1.8; _roc.beginPath(); _roc.moveTo(-_rll/2,0); _roc.quadraticCurveTo(0,-_bend,_rll/2,0); _roc.stroke();
+        } else if (type === 'curve') {
+          const _b2 = (_rcv/100)*(_rll/2);
+          _roc.lineWidth = _rsw * 1.8; _roc.beginPath(); _roc.moveTo(-_rll/2,0); _roc.bezierCurveTo(-_rll/4,-_b2,_rll/4,_b2,_rll/2,0); _roc.stroke();
+        } else if (type === 'cross') {
+          _roc.lineWidth = _rsw * 1.8; _roc.beginPath(); _roc.moveTo(-s/2,0); _roc.lineTo(s/2,0); _roc.moveTo(0,-s/2); _roc.lineTo(0,s/2); _roc.stroke();
+        } else {
+          _roc.lineWidth = _rsw;
+          if (type === 'circle') { _roc.beginPath(); _roc.arc(0,0,s/2,0,Math.PI*2); _roc.stroke(); }
+          else if (type === 'rect') { _roc.strokeRect(-s/2,-s/2,s,s); }
+          else if (type === 'triangle') { _roc.beginPath(); _roc.moveTo(0,-s/2); _roc.lineTo(s/2,s/2); _roc.lineTo(-s/2,s/2); _roc.closePath(); _roc.stroke(); }
+        }
+        _roc.restore();
+        const [_rfr,_rfg,_rfb] = parseColor(displayFill);
+        const _roff2 = document.createElement('canvas');
+        _roff2.width = _rdim; _roff2.height = _rdim;
+        const _roc2 = _roff2.getContext('2d');
+        _roc2.filter = `blur(${Math.max(0.5, _rsw * 0.7)}px)`;
+        _roc2.drawImage(_roff, 0, 0);
+        _roc2.filter = 'none';
+        const _rimgd = _roc2.getImageData(0, 0, _rdim, _rdim);
+        const _rd = _rimgd.data;
+        for (let _ri = 0; _ri < _rd.length; _ri += 4) {
+          if (_rd[_ri+3] > 60) { _rd[_ri]=_rfr; _rd[_ri+1]=_rfg; _rd[_ri+2]=_rfb; _rd[_ri+3]=Math.min(255,_rd[_ri+3]+80); }
+          else { _rd[_ri+3]=0; }
+        }
+        _roc2.putImageData(_rimgd, 0, 0);
+        _roc2.globalCompositeOperation = 'destination-out';
+        const _rholes = Math.floor(_rsw * _rdim / 60 * (erosion||1));
+        for (let _ri = 0; _ri < _rholes; _ri++) {
+          _roc2.beginPath(); _roc2.arc(Math.random()*_rdim, Math.random()*_rdim, 0.4+Math.random()*1.2, 0, Math.PI*2); _roc2.fill();
+        }
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+        ctx.drawImage(_roff2, x+jx - _rdim/2, y+jy - _rdim/2);
+        ctx.restore();
       }
-      // stroke-only or noFill: fall through to normal rendering
     }
     return;
   }
   if (dither && !riso) {
     applyDither(_nodesCtx, x+jx, y+jy, Math.max(1,size+js), displayFill, type, rot+jr, (sx||100)/100, (sy||100)/100,
-      Object.assign({}, dither, {noFill: !!noFill, noStroke: !!noStroke, sw: sw||0}));
+      Object.assign({}, dither, {noFill: !!noFill, noStroke: !!noStroke, sw: sw||0, font: font, text: displayText}));
     return;
   }
   ctx.save();
@@ -354,7 +404,7 @@ function renderNodes(pObj, pi) {
       }
       const seedIdx = Math.floor(seeds[i*5+4] * 9999);
       const risoOpts = { bristle: n.risoBristle||1, erosion: n.risoErosion||1, spread: n.risoSpread||0.38, bridge: n.risoBridge||1.4 };
-      const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, colorize: !!n.ditherColorize, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5 } : null;
+      const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, colorize: n.ditherColorize !== false, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5 } : null;
       _nodesCtx.globalCompositeOperation = n.blendMode || 'source-over';
       window._ditherCurrentNode = n;
 
@@ -966,8 +1016,17 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
   const threshold = opts.threshold || 0.5;
   const mode = opts.imgMode || opts.mode || 'bayer';
   const pad = size * 1.2;
-  const ow = Math.ceil(size * 2 * scx + pad * 2);
-  const oh = Math.ceil(size * 2 * scy + pad * 2);
+  let ow = Math.ceil(size * 2 * scx + pad * 2);
+  let oh = Math.ceil(size * 2 * scy + pad * 2);
+  // text type needs a wider canvas based on actual text measurement
+  if (type === 'text' && opts.text) {
+    const _mc = document.createElement('canvas'); _mc.width = 4; _mc.height = 4;
+    const _mctx = _mc.getContext('2d');
+    _mctx.font = `${size}px ${opts.font || 'sans-serif'}`;
+    const _tw = _mctx.measureText(opts.text).width || size;
+    ow = Math.ceil(_tw + pad * 2 + 8);
+    oh = Math.ceil(size * 1.4 + pad * 2 + 8);
+  }
   const off = document.createElement('canvas');
   off.width = ow; off.height = oh;
   const oc = off.getContext('2d');
@@ -1006,11 +1065,18 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
   } else if (type === 'cross') {
     oc.lineWidth = opts.strokeWidth || 1.5;
     oc.beginPath(); oc.moveTo(-size/2,0); oc.lineTo(size/2,0); oc.moveTo(0,-size/2); oc.lineTo(0,size/2); oc.stroke();
+  } else if (type === 'text' && opts.text) {
+    oc.font = `${size}px ${opts.font || 'sans-serif'}`;
+    oc.textAlign = 'center'; oc.textBaseline = 'middle';
+    if (!_dNoFill) oc.fillText(opts.text, 0, 0);
+    if (!_dNoStroke && _dSw > 0) { oc.lineWidth = _dSw; oc.strokeStyle = '#000'; oc.strokeText(opts.text, 0, 0); }
   }
   oc.restore();
   const imgd = oc.getImageData(0,0,ow,oh);
   const d = imgd.data;
   const [fr,fg,fb] = parseColor(fill);
+  const _useFill = opts.colorize !== false;
+  const _dotR = _useFill ? fr : 0, _dotG = _useFill ? fg : 0, _dotB = _useFill ? fb : 0;
   const out = oc.createImageData(ow, oh);
   const od = out.data;
   if (mode === 'floyd') {
@@ -1022,7 +1088,7 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
         const i = py2*ow+px2;
         const oldV = af[i], newV = oldV > threshold ? 1 : 0, err = oldV - newV;
         af[i] = newV;
-        if (newV > 0.5) { const idx=i*4; od[idx]=fr; od[idx+1]=fg; od[idx+2]=fb; od[idx+3]=255; }
+        if (newV > 0.5) { const idx=i*4; od[idx]=_dotR; od[idx+1]=_dotG; od[idx+2]=_dotB; od[idx+3]=255; }
         if (px2+1<ow) af[i+1] = Math.min(1,Math.max(0,af[i+1]+err*7/16));
         if (py2+1<oh&&px2>0) af[(py2+1)*ow+px2-1] = Math.min(1,Math.max(0,af[(py2+1)*ow+px2-1]+err*3/16));
         if (py2+1<oh) af[(py2+1)*ow+px2] = Math.min(1,Math.max(0,af[(py2+1)*ow+px2]+err*5/16));
@@ -1038,7 +1104,7 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
         const alpha = d[idx+3] / 255;
         const b = bayer[py2 % 4][px2 % 4] / 16;
         if (alpha > b * threshold + (1-threshold)) {
-          od[idx]=fr; od[idx+1]=fg; od[idx+2]=fb; od[idx+3]=255;
+          od[idx]=_dotR; od[idx+1]=_dotG; od[idx+2]=_dotB; od[idx+3]=255;
         }
       }
     }
@@ -1128,9 +1194,8 @@ updatePanel = function() {
       document.getElementById('dither-threshold-val').textContent = n.ditherThreshold||0.5;
       document.getElementById('dither-img-mode-row').style.display = 'block';
       document.getElementById('dither-img-mode').value = n.ditherImgMode || 'bayer';
-      const isImg = n.type === 'image' || n.type === 'svg';
-      document.getElementById('node-dither-colorize-row').style.display = isImg ? 'flex' : 'none';
-      document.getElementById('node-dither-colorize').checked = !!n.ditherColorize;
+      document.getElementById('node-dither-colorize-row').style.display = 'flex';
+      document.getElementById('node-dither-colorize').checked = n.ditherColorize !== false;
     } else {
       document.getElementById('node-dither-colorize-row').style.display = 'none';
       document.getElementById('dither-img-mode-row').style.display = 'none';
