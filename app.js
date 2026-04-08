@@ -155,30 +155,24 @@ function drawShape(ctx, style, type, x, y, size, fill, rot, opacity, font, text,
       tc.textAlign = 'center'; tc.textBaseline = 'middle';
       tc.fillStyle = '#000';
       tc.fillText(displayText, toff.width / 2, toff.height / 2);
-      // draw riso using text mask
+      // draw riso using text mask — solid color, no blur
       const [fr, fg, fb] = parseColor(displayFill);
-      const off2 = document.createElement('canvas');
-      off2.width = toff.width; off2.height = toff.height;
-      const oc2 = off2.getContext('2d');
-      oc2.filter = `blur(${s * 0.08}px)`;
-      oc2.drawImage(toff, 0, 0);
-      oc2.filter = 'none';
-      const imgd = oc2.getImageData(0, 0, off2.width, off2.height);
+      const imgd = tc.getImageData(0, 0, toff.width, toff.height);
       const d = imgd.data;
       for (let ii = 0; ii < d.length; ii += 4) {
-        if (d[ii+3] > 60) { d[ii]=fr; d[ii+1]=fg; d[ii+2]=fb; d[ii+3]=Math.min(255,d[ii+3]+80); }
+        if (d[ii+3] > 60) { d[ii]=fr; d[ii+1]=fg; d[ii+2]=fb; d[ii+3]=255; }
         else { d[ii+3]=0; }
       }
-      oc2.putImageData(imgd, 0, 0);
+      tc.putImageData(imgd, 0, 0);
       // erosion holes
-      oc2.globalCompositeOperation = 'destination-out';
+      tc.globalCompositeOperation = 'destination-out';
       const holes = Math.floor(tw * 0.08);
       for (let ii = 0; ii < holes; ii++) {
-        oc2.beginPath();
-        oc2.arc(Math.random()*off2.width, Math.random()*off2.height, 0.5+Math.random()*2, 0, Math.PI*2);
-        oc2.fill();
+        tc.beginPath();
+        tc.arc(Math.random()*toff.width, Math.random()*toff.height, 0.5+Math.random()*2, 0, Math.PI*2);
+        tc.fill();
       }
-      ctx.drawImage(off2, x+jx - off2.width/2, y+jy - off2.height/2);
+      ctx.drawImage(toff, x+jx - toff.width/2, y+jy - toff.height/2);
     } else if (type === 'svg' && imgEl) {
       // render SVG to offscreen, recolor with riso effect
       const aspect = imgEl.naturalWidth / imgEl.naturalHeight || 1;

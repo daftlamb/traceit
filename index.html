@@ -524,6 +524,9 @@ window.addEventListener('load', function() {
         var aspect = imgEl.naturalWidth/imgEl.naturalHeight||1;
         var s2 = Math.max(1, size+(js||0));
         var iw2 = s2*((sx||100)/100)*aspect, ih2 = s2*((sy||100)/100);
+        // respect colorArray random colors
+        var displayFillPatch = fill;
+        if (charColors && charColors.length > 0) displayFillPatch = charColors[seedIdx % charColors.length];
         ctx.save();
         ctx.globalAlpha = Math.max(0,Math.min(1,opacity||1));
         ctx.translate(x+(jx||0), y+(jy||0));
@@ -532,7 +535,7 @@ window.addEventListener('load', function() {
           mode: dither.imgMode||dither.mode||'bayer',
           dotSize: dither.dotSize||1,
           colorize: !!dither.colorize,
-          fill: fill||'#1a1a1a'
+          fill: displayFillPatch||'#1a1a1a'
         });
         ctx.restore();
         return;
