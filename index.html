@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trace It</title>
+<script src="https://cdn.jsdelivr.net/npm/paper@0.12.17/dist/paper-full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #f5f2ee; font-family: sans-serif; overflow: hidden; user-select: none; }
+#wrap { position: fixed; top: 0; left: 0; right: 260px; bottom: 0; }
+#canvas, #canvas-nodes { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+#canvas-nodes { pointer-events: none; }
+#toolbar {
+  position: fixed; top: 16px; left: calc((100vw - 260px) / 2); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.92); backdrop-filter: blur(12px);
+  border: 1px solid rgba(0,0,0,0.08); border-radius: 40px;
+  padding: 8px 14px; z-index: 100;
+}
+#toolbar h2 { font-size: 15px; font-weight: 400; color: #1a1a1a; letter-spacing: -0.3px; }
+.sep { color: rgba(0,0,0,0.2); font-size: 12px; }
+.tb-btn {
+  background: none; border: 1px solid rgba(0,0,0,0.1); color: rgba(0,0,0,0.5);
+  padding: 4px 12px; border-radius: 20px; cursor: pointer; font-size: 11px; transition: all 0.15s;
+}
+.tb-btn:hover { background: rgba(0,0,0,0.05); }
+.tb-btn.active { background: #1a1a1a; color: #f5f2ee; border-color: #1a1a1a; }
+#panel {
+  position: fixed; right: 0; top: 0; bottom: 0; width: 260px;
+  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
+  border-left: 1px solid rgba(0,0,0,0.08);
+  display: flex; flex-direction: column; z-index: 90;
+}
+#panel-header { padding: 16px 18px 12px; border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; }
+#panel-header h3 { font-size: 12px; font-weight: 600; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.5px; }
+#panel-scroll { flex: 1; overflow-y: auto; }
+#panel-body { padding: 14px 18px; }
+#node-list { padding: 0 10px 8px; }
+#panel-footer { padding: 12px 18px; border-top: 1px solid rgba(0,0,0,0.06); flex-shrink: 0; }
+.prop-row { margin-bottom: 13px; }
+.prop-label { font-size: 10px; color: rgba(0,0,0,0.4); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; display: flex; justify-content: space-between; }
+.prop-val { color: rgba(0,0,0,0.35); }
+input[type=range] { width: 100%; accent-color: #1a1a1a; }
+input[type=text], select {
+  width: 100%; padding: 6px 10px; border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 8px; font-size: 12px; background: #f5f2ee; color: #1a1a1a; outline: none;
+}
+input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px; cursor: pointer; padding: 0; }
+.row-inline { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; }
+.row-inline label { font-size: 11px; color: rgba(0,0,0,0.5); flex: 1; }
+.row-colors { display: flex; align-items: center; gap: 6px; margin-bottom: 13px; flex-wrap: wrap; }
+.row-colors label { font-size: 10px; color: rgba(0,0,0,0.4); text-transform: uppercase; letter-spacing: 0.5px; }
+.section-title { font-size: 10px; font-weight: 600; color: rgba(0,0,0,0.3); text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 10px; border-top: 1px solid rgba(0,0,0,0.06); padding-top: 12px; }
+.btn-full { width: 100%; padding: 8px; background: #1a1a1a; color: #f5f2ee; border: none; border-radius: 8px; font-size: 12px; cursor: pointer; margin-bottom: 7px; }
+.btn-full:hover { opacity: 0.8; }
+.btn-full.sec { background: none; color: #1a1a1a; border: 1px solid rgba(0,0,0,0.15); }
+/* node layer list */
+.imgthumb {
+  width: 28px; height: 28px; object-fit: cover; border-radius: 3px;
+  cursor: pointer; border: 1px solid rgba(0,0,0,0.1); position: relative;
+}
+.imgthumb:hover { opacity: 0.7; }
+.path-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; cursor: pointer; font-size: 11px; color: #1a1a1a;
+  border-radius: 6px; margin: 1px 4px; border: 1px solid transparent;
+}
+.path-item:hover { background: rgba(0,0,0,0.04); }
+.path-item.sel { background: rgba(0,0,0,0.07); border-color: rgba(0,0,0,0.08); }
+.path-item.hidden { opacity: 0.4; }
+.path-eye { font-size: 11px; color: rgba(0,0,0,0.3); cursor: pointer; flex-shrink:0; width:14px; text-align:center; }
+.path-eye:hover { color: #1a1a1a; }
+.path-lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path-meta { font-size: 10px; color: rgba(0,0,0,0.3); flex-shrink:0; }
+.node-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  margin-bottom: 2px; font-size: 12px; color: #1a1a1a;
+  border: 1px solid transparent;
+}
+.node-item:hover { background: rgba(0,0,0,0.04); }
+.node-item.sel { background: rgba(0,0,0,0.07); border-color: rgba(0,0,0,0.08); }
+.node-item.sub { padding-left: 20px; opacity: 0.85; }
+.node-drag-handle { color: rgba(0,0,0,0.2); cursor: grab; font-size: 13px; flex-shrink: 0; }
+.node-drag-handle:active { cursor: grabbing; }
+.sub-badge { font-size: 10px; color: rgba(0,0,0,0.3); flex-shrink: 0; }
+.node-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.node-lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.node-cnt { font-size: 10px; color: rgba(0,0,0,0.3); flex-shrink: 0; }
+.node-link-btn {
+  font-size: 13px; color: rgba(0,0,0,0.2); cursor: pointer; flex-shrink: 0;
+  width: 18px; text-align: center; border-radius: 4px;
+}
+.node-link-btn:hover { color: #4a90e2; background: rgba(74,144,226,0.1); }
+.node-item.sub .node-link-btn { color: #4a90e2; }
+#empty-hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); text-align: center; pointer-events: none; }
+#empty-hint p { font-size: 13px; color: rgba(0,0,0,0.25); line-height: 2; }
+.upload-btn { width: 100%; padding: 7px; background: none; border: 1px dashed rgba(0,0,0,0.2); border-radius: 8px; font-size: 11px; color: rgba(0,0,0,0.4); cursor: pointer; text-align: center; }
+.upload-btn:hover { border-color: rgba(0,0,0,0.4); color: rgba(0,0,0,0.6); }
+.hint-text { font-size: 10px; color: rgba(0,0,0,0.3); margin-top: 4px; line-height: 1.5; }
+.layers-header { font-size: 10px; font-weight: 600; color: rgba(0,0,0,0.3); text-transform: uppercase; letter-spacing: 0.5px; padding: 10px 10px 6px; border-top: 1px solid rgba(0,0,0,0.06); }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <canvas id="canvas"></canvas>
+  <canvas id="canvas-nodes"></canvas>
+  <div id="empty-hint">
+    <p>press <strong>P</strong> to draw · or use presets in toolbar<br>double-click to finish path</p>
+  </div>
+</div>
+
+<div id="toolbar">
+  <h2>Trace It</h2>
+  <span class="sep">·</span>
+  <button class="tb-btn active" id="btn-select">select</button>
+  <button class="tb-btn" id="btn-path">path</button>
+  <span class="sep">·</span>
+  <button class="tb-btn" id="pre-circle">○</button>
+  <button class="tb-btn" id="pre-rect">□</button>
+  <button class="tb-btn" id="pre-line">—</button>
+  <button class="tb-btn" id="pre-wave">∿</button>
+  <span class="sep">·</span>
+  <button class="tb-btn" id="btn-delete">delete</button>
+  <button class="tb-btn" id="btn-clear">clear</button>
+  <span class="sep">·</span>
+  <button class="tb-btn" id="btn-export-svg">SVG</button>
+  <button class="tb-btn" id="btn-export-png">PNG</button>
+  <span class="sep">·</span>
+  <button class="tb-btn" id="btn-grid">grid</button>
+</div>
+
+<div id="panel">
+  <div id="panel-header"><h3 id="panel-title">Properties</h3></div>
+  <div id="panel-scroll">
+
+    <!-- path list — always visible -->
+    <div id="path-list-wrap">
+      <div class="layers-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Paths</span>
+        <span id="path-list-count" style="font-size:10px;color:rgba(0,0,0,0.3)"></span>
+      </div>
+      <div id="path-list"></div>
+    </div>
+
+    <!-- node layer list (shown when path selected) -->
+    <div id="node-list-wrap" style="display:none">
+      <div class="layers-header">Node Layers</div>
+      <div id="node-list"></div>
+    </div>
+
+    <div id="panel-body">
+      <div id="props-empty">
+        <p style="font-size:12px;color:rgba(0,0,0,0.3);line-height:2;margin-top:4px">
+          <strong>P</strong> — path tool<br>
+          <strong>V</strong> — select tool<br>
+          <strong>Del</strong> — delete selected<br>
+          <strong>Esc</strong> — cancel drawing
+        </p>
+      </div>
+
+      <div id="props-path" style="display:none">
+        <div class="section-title" style="margin-top:0;border-top:none;padding-top:0">path</div>
+        <div class="row-colors">
+          <label>stroke</label>
+          <input type="color" id="path-stroke" value="#1a1a1a">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">stroke width <span class="prop-val" id="path-sw-val">1.5</span></div>
+          <input type="range" id="path-sw" min="0" max="10" step="0.5" value="1.5">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">opacity <span class="prop-val" id="path-op-val">100%</span></div>
+          <input type="range" id="path-op" min="0" max="1" step="0.01" value="1">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">scale <span class="prop-val" id="path-scale-val">100%</span></div>
+          <input type="range" id="path-scale" min="10" max="300" step="1" value="100">
+        </div>
+        <div class="row-inline">
+          <label>show path</label>
+          <input type="checkbox" id="path-visible" checked>
+        </div>
+        <div class="row-inline">
+          <label>smooth (bezier)</label>
+          <input type="checkbox" id="path-smooth">
+        </div>
+
+      </div>
+
+      <div id="props-node" style="display:none">
+        <div class="section-title" style="margin-top:0;border-top:none;padding-top:0">layer</div>
+        <div class="prop-row">
+          <div class="prop-label">name</div>
+          <input type="text" id="node-name" placeholder="optional label">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">link to parent</div>
+          <select id="node-parent"><option value="">— none —</option></select>
+          <div class="hint-text">inherits distribution from parent</div>
+        </div>
+        <div class="section-title">shape</div>
+        <div class="prop-row">
+          <div class="prop-label">render style</div>
+          <select id="node-style">
+            <option value="flat">flat</option>
+            <option value="rough">rough</option>
+          </select>
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">blend mode</div>
+          <select id="node-blend">
+            <option value="source-over">normal</option>
+            <option value="multiply">multiply</option>
+            <option value="screen">screen</option>
+            <option value="overlay">overlay</option>
+            <option value="color-dodge">dodge</option>
+            <option value="color-burn">burn</option>
+            <option value="hard-light">hard light</option>
+            <option value="soft-light">soft light</option>
+            <option value="difference">difference</option>
+            <option value="exclusion">exclusion</option>
+          </select>
+        </div>
+        <div class="row-inline">
+          <label>risograph effect</label>
+          <input type="checkbox" id="node-riso">
+        </div>
+        <div id="riso-params" style="display:none">
+          <div class="prop-row">
+            <div class="prop-label">bristle <span class="prop-val" id="riso-bristle-val">1.0</span></div>
+            <input type="range" id="riso-bristle" min="0" max="3" step="0.1" value="1">
+          </div>
+          <div class="prop-row">
+            <div class="prop-label">erosion <span class="prop-val" id="riso-erosion-val">1.0</span></div>
+            <input type="range" id="riso-erosion" min="0" max="4" step="0.1" value="1">
+          </div>
+          <div class="prop-row">
+            <div class="prop-label">spread <span class="prop-val" id="riso-spread-val">0.38</span></div>
+            <input type="range" id="riso-spread" min="0" max="1" step="0.01" value="0.38">
+          </div>
+          <div class="prop-row">
+            <div class="prop-label">bridge <span class="prop-val" id="riso-bridge-val">1.4</span></div>
+            <input type="range" id="riso-bridge" min="0" max="3" step="0.1" value="1.4">
+          </div>
+        </div>
+        <div class="row-inline">
+          <label>dither effect</label>
+          <input type="checkbox" id="node-dither">
+        </div>
+        <div id="dither-params" style="display:none">
+          <div class="prop-row">
+            <div class="prop-label">dot size <span class="prop-val" id="dither-dot-val">2</span></div>
+            <input type="range" id="dither-dot" min="1" max="6" step="1" value="2">
+          </div>
+          <div class="prop-row">
+            <div class="prop-label">threshold <span class="prop-val" id="dither-threshold-val">0.5</span></div>
+            <input type="range" id="dither-threshold" min="0.1" max="1" step="0.05" value="0.5">
+          </div>
+          <div class="prop-row" id="dither-img-mode-row" style="display:none">
+            <div class="prop-label">dither mode</div>
+            <select id="dither-img-mode">
+              <option value="bayer">bayer</option>
+              <option value="floyd">floyd-steinberg</option>
+            </select>
+          </div>
+          <div class="row-inline" id="node-dither-colorize-row" style="display:none">
+            <label>colorize</label>
+            <input type="checkbox" id="node-dither-colorize">
+          </div>
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">type</div>
+          <select id="node-type">
+            <option value="circle">circle</option>
+            <option value="rect">rect</option>
+            <option value="triangle">triangle</option>
+            <option value="line">line</option>
+            <option value="cross">cross</option>
+            <option value="text">text</option>
+            <option value="image">image</option>
+            <option value="svg">svg</option>
+          </select>
+        </div>
+        <div id="node-text-row" class="prop-row" style="display:none">
+          <div class="prop-label">text (single)</div>
+          <input type="text" id="node-text" placeholder="leave empty to use char array">
+        </div>
+        <div id="node-char-row" class="prop-row" style="display:none">
+          <div class="prop-label">char array</div>
+          <input type="text" id="node-char-array" placeholder="e.g. 1234 or ABCD">
+          <div class="hint-text">each node picks a random char</div>
+        </div>
+
+        <div id="node-font-row" class="prop-row" style="display:none">
+          <div class="prop-label">font</div>
+          <select id="node-font">
+            <option value="sans-serif">sans-serif</option>
+            <option value="serif">serif</option>
+            <option value="monospace">monospace</option>
+            <option value="Georgia">Georgia</option>
+          </select>
+        </div>
+        <div id="node-image-row" style="display:none;margin-bottom:13px">
+          <input type="file" id="node-image-upload" accept="image/*" style="display:none">
+          <button class="upload-btn" id="node-image-btn">↑ upload image</button>
+          <div id="node-image-name" style="font-size:10px;color:rgba(0,0,0,0.35);margin-top:5px;text-align:center"></div>
+          <div style="margin-top:8px">
+            <input type="file" id="node-imgarray-upload" accept="image/*" multiple style="display:none">
+            <button class="upload-btn" id="node-imgarray-btn">↑ upload image set</button>
+            <div style="font-size:10px;color:rgba(0,0,0,0.35);margin-top:4px;text-align:center" id="node-imgarray-count"></div>
+            <div id="node-imgarray-thumbs" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;"></div>
+            <div class="prop-row" id="node-imgarray-mode-row" style="display:none;margin-top:6px">
+              <div class="prop-label">order</div>
+              <select id="node-imgarray-mode">
+                <option value="sequence">sequence</option>
+                <option value="random">random</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="node-svg-row" style="display:none;margin-bottom:13px">
+          <input type="file" id="node-svg-upload" accept=".svg" style="display:none">
+          <button class="upload-btn" id="node-svg-btn">↑ upload svg</button>
+          <div id="node-svg-name" style="font-size:10px;color:rgba(0,0,0,0.35);margin-top:5px;text-align:center"></div>
+        </div>
+        <div class="row-colors">
+          <label>fill</label>
+          <input type="color" id="node-fill" value="#c8b8a2">
+          <input type="checkbox" id="node-no-fill" title="no fill">
+          <label>stroke</label>
+          <input type="color" id="node-stroke-color" value="#1a1a1a">
+          <input type="checkbox" id="node-no-stroke" title="no stroke">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">color array</div>
+          <input type="text" id="node-color-array" placeholder="#f00,#0f0,#00f">
+          <div class="hint-text">comma-separated hex colors — random per node</div>
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">stroke width <span class="prop-val" id="node-sw-val">0</span></div>
+          <input type="range" id="node-sw" min="0" max="6" step="0.5" value="0">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">size <span class="prop-val" id="node-size-val">16</span></div>
+          <input type="range" id="node-size" min="2" max="200" step="1" value="16">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">rotation <span class="prop-val" id="node-rot-val">0°</span></div>
+          <input type="range" id="node-rot" min="-180" max="180" step="1" value="0">
+        </div>
+        <div class="row-inline">
+          <label>follow path angle</label>
+          <input type="checkbox" id="node-follow">
+        </div>
+        <div class="section-title">distribution</div>
+        <div class="prop-row">
+          <div class="prop-label">count <span class="prop-val" id="node-count-val">1</span></div>
+          <input type="range" id="node-count" min="1" max="120" step="1" value="1">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">offset <span class="prop-val" id="node-offset-val">0%</span></div>
+          <input type="range" id="node-offset" min="0" max="1" step="0.01" value="0">
+        </div>
+        <div class="section-title">3d tilt</div>
+        <div class="prop-row">
+          <div class="prop-label">tilt angle <span class="prop-val" id="node-tilt-val">0°</span></div>
+          <input type="range" id="node-tilt" min="0" max="89" step="1" value="0">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">tilt mode</div>
+          <select id="node-tilt-mode">
+            <option value="perspective">perspective</option>
+            <option value="isometric">isometric</option>
+          </select>
+        </div>
+        <div class="section-title">shape ratio</div>
+        <div class="prop-row">
+          <div class="prop-label">scale X <span class="prop-val" id="node-sx-val">100%</span></div>
+          <input type="range" id="node-sx" min="10" max="500" step="1" value="100">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">scale Y <span class="prop-val" id="node-sy-val">100%</span></div>
+          <input type="range" id="node-sy" min="10" max="500" step="1" value="100">
+        </div>
+        <div class="section-title">gradient</div>
+        <div class="prop-row">
+          <div class="prop-label">size end <span class="prop-val" id="node-size-end-val">16</span></div>
+          <input type="range" id="node-size-end" min="2" max="200" step="1" value="16">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">opacity start <span class="prop-val" id="node-op-start-val">100%</span></div>
+          <input type="range" id="node-op-start" min="0" max="1" step="0.01" value="1">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">opacity end <span class="prop-val" id="node-op-end-val">100%</span></div>
+          <input type="range" id="node-op-end" min="0" max="1" step="0.01" value="1">
+        </div>
+        <div class="section-title">jitter</div>
+        <div class="prop-row">
+          <div class="prop-label">position <span class="prop-val" id="node-jitter-val">0</span></div>
+          <input type="range" id="node-jitter" min="0" max="60" step="1" value="0">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">rotation <span class="prop-val" id="node-rot-jitter-val">0°</span></div>
+          <input type="range" id="node-rot-jitter" min="0" max="180" step="1" value="0">
+        </div>
+        <div class="prop-row">
+          <div class="prop-label">size <span class="prop-val" id="node-size-jitter-val">0</span></div>
+          <input type="range" id="node-size-jitter" min="0" max="30" step="1" value="0">
+        </div>
+        <div class="prop-row" id="node-linelen-row" style="display:none">
+          <div class="prop-label">length <span class="prop-val" id="node-linelen-val">100</span></div>
+          <input type="range" id="node-linelen" min="10" max="500" step="1" value="100">
+        </div>
+        <div class="prop-row" id="node-curvature-row" style="display:none">
+          <div class="prop-label">curvature <span class="prop-val" id="node-curvature-val">50</span></div>
+          <input type="range" id="node-curvature" min="0" max="100" step="1" value="50">
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="panel-footer">
+    <button class="btn-full" id="btn-add-node">+ add node layer</button>
+    <button class="btn-full sec" id="btn-duplicate">duplicate path</button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+
+<script>
+// ── parseColor ────────────────────────────────────────────────────────────
+function parseColor(hex) {
+  hex = (hex||'#000').replace('#','');
+  if (hex.length===3) hex=hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  return [parseInt(hex.slice(0,2),16),parseInt(hex.slice(2,4),16),parseInt(hex.slice(4,6),16)];
+}
+
+// ── applyImageDither ──────────────────────────────────────────────────────
+function applyImageDither(ctx, imgEl, w, h, opts) {
+  opts = opts||{};
+  const mode=opts.mode||'bayer', dotSize=Math.max(1,opts.dotSize||1);
+  const colorize=opts.colorize||false, fill=opts.fill||'#1a1a1a';
+  const ow=Math.max(1,Math.ceil(w/dotSize)), oh=Math.max(1,Math.ceil(h/dotSize));
+  const off=document.createElement('canvas'); off.width=ow; off.height=oh;
+  const oc=off.getContext('2d'); oc.drawImage(imgEl,0,0,ow,oh);
+  const imgd=oc.getImageData(0,0,ow,oh); const d=imgd.data;
+  for(let i=0;i<d.length;i+=4){const g=d[i]*.299+d[i+1]*.587+d[i+2]*.114;d[i]=d[i+1]=d[i+2]=g;}
+  const [fr,fg,fb]=parseColor(fill);
+  if(mode==='floyd'){
+    for(let py=0;py<oh;py++) for(let px=0;px<ow;px++){
+      const ii=(py*ow+px)*4,oldV=d[ii],nw=oldV<128?0:255,err=oldV-nw;
+      d[ii]=d[ii+1]=d[ii+2]=nw;
+      if(px+1<ow){const j=(py*ow+px+1)*4;d[j]+=err*7/16;d[j+1]+=err*7/16;d[j+2]+=err*7/16;}
+      if(py+1<oh&&px>0){const j=((py+1)*ow+px-1)*4;d[j]+=err*3/16;d[j+1]+=err*3/16;d[j+2]+=err*3/16;}
+      if(py+1<oh){const j=((py+1)*ow+px)*4;d[j]+=err*5/16;d[j+1]+=err*5/16;d[j+2]+=err*5/16;}
+      if(py+1<oh&&px+1<ow){const j=((py+1)*ow+px+1)*4;d[j]+=err/16;d[j+1]+=err/16;d[j+2]+=err/16;}
+    }
+  } else {
+    const bayer=[[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
+    for(let py=0;py<oh;py++) for(let px=0;px<ow;px++){
+      const ii=(py*ow+px)*4,thr=(bayer[py%4][px%4]/16)*255;
+      d[ii]=d[ii+1]=d[ii+2]=d[ii]>thr?255:0;
+    }
+  }
+  if(colorize){for(let i=0;i<d.length;i+=4){if(d[i]<128){d[i]=fr;d[i+1]=fg;d[i+2]=fb;d[i+3]=255;}else{d[i+3]=0;}}}
+  oc.putImageData(imgd,0,0);
+  ctx.save(); ctx.imageSmoothingEnabled=false;
+  ctx.drawImage(off,0,0,ow,oh,-w/2,-h/2,w,h);
+  ctx.restore();
+}
+
+// ── image array bindings ──────────────────────────────────────────────────
+window.addEventListener('load', function() {
+  var btn = document.getElementById('node-imgarray-btn');
+  var inp = document.getElementById('node-imgarray-upload');
+  var modeEl = document.getElementById('node-imgarray-mode');
+  if (btn && inp) {
+    btn.addEventListener('click', function(){ inp.click(); });
+    inp.addEventListener('change', function(e){
+      var n = typeof gN==='function' ? gN() : null; if(!n) return;
+      n.imgArr = n.imgArr||[];
+      var files = Array.from(e.target.files); if(!files.length) return;
+      var loaded=0;
+      files.forEach(function(file){
+        var img=new Image();
+        img.onload=function(){
+          n.imgArr.push({img:img,name:file.name});
+          loaded++;
+          if(loaded===files.length){ if(typeof updatePanel==='function') updatePanel(); if(typeof paper!=='undefined') paper.view.draw(); }
+        };
+        img.src=URL.createObjectURL(file);
+      });
+      e.target.value='';
+    });
+  }
+  if (modeEl) {
+    modeEl.addEventListener('change', function(e){
+      var n = typeof gN==='function' ? gN() : null;
+      if(n){ n.imgArrMode=e.target.value; if(typeof paper!=='undefined') paper.view.draw(); }
+    });
+  }
+
+  // patch drawShape to handle imgArr and image dither
+  if (typeof drawShape === 'function') {
+    var _origDS = drawShape;
+    drawShape = function(ctx, style, type, x, y, size, fill, rot, opacity, font, text, jx, jy, jr, js, sc, sw, noFill, noStroke, sx, sy, imgEl, riso, nextPt, nextR, charArr, charColors, seedIdx, risoOpts, dither) {
+      // resolve imgEl from imgArr using global state
+      var _n = window._ditherCurrentNode;
+      var _ii = window._ditherCurrentIdx || 0;
+      if (_n && _n.imgArr && _n.imgArr.length) {
+        if (_n.imgArrMode === 'random') {
+          var seed = (_ii * 9301 + 49297) % 233280 / 233280;
+          imgEl = _n.imgArr[Math.floor(seed * _n.imgArr.length)].img;
+        } else {
+          imgEl = _n.imgArr[_ii % _n.imgArr.length].img;
+        }
+      }
+      // apply image dither
+      if ((type==='image'||type==='svg') && imgEl && dither) {
+        var aspect = imgEl.naturalWidth/imgEl.naturalHeight||1;
+        var s2 = Math.max(1, size+(js||0));
+        var iw2 = s2*((sx||100)/100)*aspect, ih2 = s2*((sy||100)/100);
+        ctx.save();
+        ctx.globalAlpha = Math.max(0,Math.min(1,opacity||1));
+        ctx.translate(x+(jx||0), y+(jy||0));
+        ctx.rotate(((rot||0)+(jr||0))*Math.PI/180);
+        applyImageDither(ctx, imgEl, iw2, ih2, {
+          mode: dither.imgMode||dither.mode||'bayer',
+          dotSize: dither.dotSize||1,
+          colorize: !!dither.colorize,
+          fill: fill||'#1a1a1a'
+        });
+        ctx.restore();
+        return;
+      }
+      var args = [ctx, style, type, x, y, size, fill, rot, opacity, font, text, jx, jy, jr, js, sc, sw, noFill, noStroke, sx, sy, imgEl, riso, nextPt, nextR, charArr, charColors, seedIdx, risoOpts, dither];
+      return _origDS.apply(this, args);
+    };
+  }
+});
+
+// buildImgArrayThumbs — called by updatePanel
+function buildImgArrayThumbs(n) {
+  var wrap=document.getElementById('node-imgarray-thumbs');
+  var cnt=document.getElementById('node-imgarray-count');
+  var modeRow=document.getElementById('node-imgarray-mode-row');
+  if(!wrap) return;
+  wrap.innerHTML='';
+  if(!n||!n.imgArr||!n.imgArr.length){
+    if(cnt) cnt.textContent='';
+    if(modeRow) modeRow.style.display='none';
+    return;
+  }
+  if(cnt) cnt.textContent=n.imgArr.length+' image'+(n.imgArr.length>1?'s':'');
+  if(modeRow) modeRow.style.display='flex';
+  var modeEl=document.getElementById('node-imgarray-mode');
+  if(modeEl) modeEl.value=n.imgArrMode||'sequence';
+  n.imgArr.forEach(function(item,idx){
+    var img=document.createElement('img');
+    img.src=item.img.src;
+    img.style.cssText='width:28px;height:28px;object-fit:cover;border-radius:3px;cursor:pointer;border:1px solid rgba(0,0,0,0.1);';
+    img.title=item.name+' (click to remove)';
+    img.addEventListener('click',function(){
+      n.imgArr.splice(idx,1);
+      if(!n.imgArr.length) delete n.imgArr;
+      buildImgArrayThumbs(n);
+      if(typeof paper!=='undefined') paper.view.draw();
+    });
+    wrap.appendChild(img);
+  });
+}
+</script>
+</body>
+</html>
