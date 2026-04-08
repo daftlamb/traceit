@@ -470,25 +470,53 @@ function clearHighlight() {
   if (_highlightPath) { _highlightPath.remove(); _highlightPath = null; }
 }
 
+function buildPresetPath(pp, type, cx, cy, params) {
+  pp.removeSegments();
+  if (type === 'circle') {
+    const r = params.radius || 160;
+    const steps = 64;
+    const arc = params.half ? Math.PI : Math.PI * 2;
+    for (let i = 0; i <= steps; i++) {
+      const a = (i/steps)*arc - Math.PI/2;
+      pp.add(new paper.Point(cx + Math.cos(a)*r, cy + Math.sin(a)*r));
+    }
+    pp.smooth({ type: 'catmull-rom' });
+  } else if (type === 'rect') {
+    const r = params.size || 160;
+    pp.add(new paper.Point(cx-r,cy-r)); pp.add(new paper.Point(cx+r,cy-r));
+    pp.add(new paper.Point(cx+r,cy+r)); pp.add(new paper.Point(cx-r,cy+r)); pp.add(new paper.Point(cx-r,cy-r));
+  } else if (type === 'line') {
+    const hl = (params.length || 400) / 2;
+    pp.add(new paper.Point(cx-hl,cy)); pp.add(new paper.Point(cx+hl,cy));
+  } else if (type === 'wave') {
+    const w = params.width || 400;
+    const amp = params.amplitude || 60;
+    const freq = params.frequency || 0.4;
+    const steps = 40;
+    for (let i = 0; i <= steps; i++) {
+      pp.add(new paper.Point(cx - w/2 + i*(w/steps), cy + Math.sin(i*freq)*amp));
+    }
+    pp.smooth({ type: 'catmull-rom' });
+  }
+}
+
+function regeneratePreset(pObj) {
+  const c = pObj.paperPath.bounds.center;
+  buildPresetPath(pObj.paperPath, pObj.presetType, c.x, c.y, pObj.presetParams || {});
+  pushHistory();
+  highlightSelected();
+  paper.view.draw();
+}
+
 function makePreset(type) {
   // use paper.view.size for correct coordinate space
   const vw = paper.view.size.width, vh = paper.view.size.height;
   const cx = vw / 2, cy = vh / 2;
   const pp = new paper.Path({ strokeColor: '#1a1a1a', strokeWidth: 1.5, strokeJoin: 'round', strokeCap: 'round' });
-  if (type === 'circle') {
-    for (let i = 0; i <= 64; i++) { const a = (i/64)*Math.PI*2; pp.add(new paper.Point(cx+Math.cos(a)*160, cy+Math.sin(a)*160)); }
-    pp.smooth({ type: 'catmull-rom' });
-  } else if (type === 'rect') {
-    const r = 160;
-    pp.add(new paper.Point(cx-r,cy-r)); pp.add(new paper.Point(cx+r,cy-r));
-    pp.add(new paper.Point(cx+r,cy+r)); pp.add(new paper.Point(cx-r,cy+r)); pp.add(new paper.Point(cx-r,cy-r));
-  } else if (type === 'line') {
-    pp.add(new paper.Point(cx-200,cy)); pp.add(new paper.Point(cx+200,cy));
-  } else if (type === 'wave') {
-    for (let i = 0; i <= 40; i++) { pp.add(new paper.Point(cx-200+i*10, cy+Math.sin(i*0.4)*60)); }
-    pp.smooth({ type: 'catmull-rom' });
-  }
-  const pObj = { paperPath:pp, stroke:'#1a1a1a', sw:1.5, opacity:1, visible:true, smooth:false, scale:1, nodes:[] };
+  const defaultParams = { circle:{radius:160,half:false}, rect:{size:160}, line:{length:400}, wave:{width:400,amplitude:60,frequency:0.4} };
+  const params = defaultParams[type] || {};
+  buildPresetPath(pp, type, cx, cy, params);
+  const pObj = { paperPath:pp, stroke:'#1a1a1a', sw:1.5, opacity:1, visible:true, smooth:false, scale:1, nodes:[], presetType:type, presetParams: Object.assign({}, params) };
   paths.push(pObj);
       pushHistory();
   selected = { type:'path', pi:paths.length-1 };
@@ -499,6 +527,37 @@ function makePreset(type) {
 ['circle','rect','line','wave'].forEach(t => {
   const el = document.getElementById('pre-'+t);
   if (el) el.addEventListener('click', () => makePreset(t));
+});
+
+// preset shape param bindings
+function _presetSlider(id, valId, paramKey, parse) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', e => {
+    if (!selected || selected.type !== 'path') return;
+    const pObj = paths[selected.pi];
+    if (!pObj.presetType) return;
+    const v = parse ? parse(e.target.value) : parseFloat(e.target.value);
+    pObj.presetParams = pObj.presetParams || {};
+    pObj.presetParams[paramKey] = v;
+    document.getElementById(valId).textContent = v;
+    regeneratePreset(pObj);
+  });
+}
+_presetSlider('preset-radius', 'preset-radius-val', 'radius', parseFloat);
+_presetSlider('preset-rect-size', 'preset-rect-size-val', 'size', parseFloat);
+_presetSlider('preset-line-len', 'preset-line-len-val', 'length', parseFloat);
+_presetSlider('preset-wave-width', 'preset-wave-width-val', 'width', parseFloat);
+_presetSlider('preset-wave-amp', 'preset-wave-amp-val', 'amplitude', parseFloat);
+_presetSlider('preset-wave-freq', 'preset-wave-freq-val', 'frequency', v => Math.round(parseFloat(v)*100)/100);
+
+document.getElementById('preset-half').addEventListener('change', e => {
+  if (!selected || selected.type !== 'path') return;
+  const pObj = paths[selected.pi];
+  if (!pObj.presetType) return;
+  pObj.presetParams = pObj.presetParams || {};
+  pObj.presetParams.half = e.target.checked;
+  regeneratePreset(pObj);
 });
 
 const pt = new paper.Tool();
@@ -742,6 +801,34 @@ function updatePanel() {
     document.getElementById('path-visible').checked = p.visible!==false;
     document.getElementById('path-smooth').checked = !!p.smooth;
     const sc = p.scale||1; document.getElementById('path-scale').value = Math.round(sc*100); document.getElementById('path-scale-val').textContent = Math.round(sc*100)+'%';
+    // preset shape params
+    const presetWrap = document.getElementById('preset-shape-params');
+    ['circle','rect','line','wave'].forEach(t => document.getElementById('preset-'+t+'-params').style.display='none');
+    if (p.presetType) {
+      presetWrap.style.display = 'block';
+      document.getElementById('preset-'+p.presetType+'-params').style.display = 'block';
+      const pr = p.presetParams || {};
+      if (p.presetType === 'circle') {
+        document.getElementById('preset-radius').value = pr.radius||160;
+        document.getElementById('preset-radius-val').textContent = pr.radius||160;
+        document.getElementById('preset-half').checked = !!pr.half;
+      } else if (p.presetType === 'rect') {
+        document.getElementById('preset-rect-size').value = pr.size||160;
+        document.getElementById('preset-rect-size-val').textContent = pr.size||160;
+      } else if (p.presetType === 'line') {
+        document.getElementById('preset-line-len').value = pr.length||400;
+        document.getElementById('preset-line-len-val').textContent = pr.length||400;
+      } else if (p.presetType === 'wave') {
+        document.getElementById('preset-wave-width').value = pr.width||400;
+        document.getElementById('preset-wave-width-val').textContent = pr.width||400;
+        document.getElementById('preset-wave-amp').value = pr.amplitude||60;
+        document.getElementById('preset-wave-amp-val').textContent = pr.amplitude||60;
+        document.getElementById('preset-wave-freq').value = pr.frequency||0.4;
+        document.getElementById('preset-wave-freq-val').textContent = pr.frequency||0.4;
+      }
+    } else {
+      presetWrap.style.display = 'none';
+    }
   }
   if (selected.type === 'node') {
     const n = pObj.nodes[selected.ni];
