@@ -35,7 +35,7 @@ function undo() {
 let currentDraw = null;
 let showGrid = false;
 let artboard = { x: 0, y: 0, w: 800, h: 600 }; // world coords, updated after init
-let _artboardBg = null;
+let showArtboard = false;
 let _spacePan = false, _panLast = null;
 
 function lcg(seed) {
@@ -471,22 +471,34 @@ paper.view.draw = function () {
 
   _nodesCtx.restore(); // back to screen space
 
-  // dim area outside artboard (screen space)
-  const ap1 = paper.view.projectToView(new paper.Point(artboard.x, artboard.y));
-  const ap2 = paper.view.projectToView(new paper.Point(artboard.x + artboard.w, artboard.y + artboard.h));
-  const ax = ap1.x, ay = ap1.y, aw = ap2.x - ap1.x, ah = ap2.y - ap1.y;
-  const cw = _nodesCanvas.width, ch = _nodesCanvas.height;
-  _nodesCtx.fillStyle = 'rgba(0,0,0,0.1)';
-  _nodesCtx.fillRect(0, 0, cw, ay);
-  _nodesCtx.fillRect(0, ay + ah, cw, ch - ay - ah);
-  _nodesCtx.fillRect(0, ay, ax, ah);
-  _nodesCtx.fillRect(ax + aw, ay, cw - ax - aw, ah);
+  // artboard overlay (screen space) — only when enabled
+  if (showArtboard) {
+    const ap1 = paper.view.projectToView(new paper.Point(artboard.x, artboard.y));
+    const ap2 = paper.view.projectToView(new paper.Point(artboard.x + artboard.w, artboard.y + artboard.h));
+    const ax = ap1.x, ay = ap1.y, aw = ap2.x - ap1.x, ah = ap2.y - ap1.y;
+    const cw = _nodesCanvas.width, ch = _nodesCanvas.height;
 
-  // artboard border
-  _nodesCtx.strokeStyle = 'rgba(0,0,0,0.15)';
-  _nodesCtx.lineWidth = 1;
-  _nodesCtx.setLineDash([]);
-  _nodesCtx.strokeRect(ax, ay, aw, ah);
+    // dim outside
+    _nodesCtx.fillStyle = 'rgba(0,0,0,0.08)';
+    _nodesCtx.fillRect(0, 0, cw, ay);
+    _nodesCtx.fillRect(0, ay + ah, cw, ch - ay - ah);
+    _nodesCtx.fillRect(0, ay, ax, ah);
+    _nodesCtx.fillRect(ax + aw, ay, cw - ax - aw, ah);
+
+    // corner crosshair marks
+    const arm = Math.min(18, aw * 0.06, ah * 0.06); // arm length
+    _nodesCtx.strokeStyle = 'rgba(0,0,0,0.45)';
+    _nodesCtx.lineWidth = 1;
+    _nodesCtx.setLineDash([]);
+    const corners = [[ax, ay], [ax + aw, ay], [ax + aw, ay + ah], [ax, ay + ah]];
+    const dirs = [[ 1, 1], [-1, 1], [-1,-1], [ 1,-1]];
+    corners.forEach(([cx2, cy2], i) => {
+      const [dx2, dy2] = dirs[i];
+      _nodesCtx.beginPath();
+      _nodesCtx.moveTo(cx2 + dx2 * arm, cy2); _nodesCtx.lineTo(cx2, cy2); _nodesCtx.lineTo(cx2, cy2 + dy2 * arm);
+      _nodesCtx.stroke();
+    });
+  }
 };
 
 let _highlightPath = null;
@@ -505,17 +517,7 @@ function clearHighlight() {
 }
 
 function updateArtboardBg() {
-  if (_artboardBg) { _artboardBg.remove(); _artboardBg = null; }
-  _artboardBg = new paper.Path.Rectangle({
-    point: new paper.Point(artboard.x, artboard.y),
-    size: new paper.Size(artboard.w, artboard.h),
-    fillColor: 'white',
-    strokeColor: null
-  });
-  _artboardBg.shadowColor = new paper.Color(0, 0, 0, 0.12);
-  _artboardBg.shadowBlur = 18;
-  _artboardBg.shadowOffset = new paper.Point(0, 3);
-  paper.project.activeLayer.insertChild(0, _artboardBg);
+  // no Paper.js background rect — artboard is drawn as canvas2d overlay only
 }
 
 function buildPresetPath(pp, type, cx, cy, params) {
@@ -670,7 +672,7 @@ pt.onMouseDown = function (e) {
     currentDraw.paperPath.add(e.point); paper.view.draw();
   } else if (activeTool === 'select') {
     const hit = paper.project.hitTest(e.point, { stroke:true, fill:true, tolerance:12 });
-    if (hit && hit.item && hit.item !== _artboardBg) {
+    if (hit && hit.item) {
       const pi = paths.findIndex(p => p.paperPath === hit.item);
       if (pi >= 0) { selected = { type:'path', pi }; highlightSelected(); updatePanel(); return; }
     }
@@ -852,22 +854,30 @@ document.getElementById('tp-add').addEventListener('click', () => {
   if (!text) return;
   const size = parseInt(document.getElementById('tp-size').value) || 120;
 
-  // build one combined SVG path string from all glyphs
-  const otPath = _otFont.getPath(text, 0, 0, size);
-  const svgPathD = otPath.toPathData(3);
-  if (!svgPathD) return;
-
-  // wrap in minimal SVG so paper can parse it
-  const svgStr = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${svgPathD}"/></svg>`;
-  const imported = paper.project.importSVG(svgStr, { expandShapes: true, insert: false });
-
+  // Use getPaths() per character so each glyph is independent.
+  // Each glyph's path data may contain multiple subpaths (e.g. 'o' has outer+inner).
+  // Split at 'M' boundaries so each closed contour becomes its own Paper.js Path.
+  const glyphPaths = _otFont.getPaths(text, 0, 0, size);
   const collected = [];
-  function collectPaths(item) {
-    if (item instanceof paper.Path) collected.push(item);
-    else if (item instanceof paper.CompoundPath) collected.push(item);
-    else if (item.children) item.children.forEach(collectPaths);
-  }
-  collectPaths(imported);
+
+  glyphPaths.forEach(gp => {
+    const d = gp.toPathData(3);
+    if (!d || d.trim() === '') return;
+    // split compound path data into individual closed subpaths at 'Z' boundaries
+    const subDs = d.match(/M[^M]*/gi) || [d];
+    subDs.forEach(sub => {
+      const s = sub.trim(); if (!s) return;
+      const svgStr = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${s}"/></svg>`;
+      const imp = paper.project.importSVG(svgStr, { expandShapes: true, insert: false });
+      function collect(item) {
+        if (item instanceof paper.Path) { if (item.segments.length > 0) collected.push(item); }
+        else if (item instanceof paper.CompoundPath) { item.children.forEach(collect); }
+        else if (item.children) item.children.forEach(collect);
+      }
+      collect(imp);
+    });
+  });
+
   if (collected.length === 0) return;
 
   // center on current view
@@ -1330,13 +1340,11 @@ document.getElementById('btn-export-png').addEventListener('click',()=>{
   const a = document.createElement('a'); a.download = 'traceit.png'; a.href = out.toDataURL('image/png'); a.click();
 });
 document.getElementById('btn-export-svg').addEventListener('click',()=>{
-  if (_artboardBg) _artboardBg.visible = false;
   const svgEl = paper.project.exportSVG({ asString: false });
   svgEl.setAttribute('viewBox', `${artboard.x} ${artboard.y} ${artboard.w} ${artboard.h}`);
   svgEl.setAttribute('width', artboard.w);
   svgEl.setAttribute('height', artboard.h);
   const svg = new XMLSerializer().serializeToString(svgEl);
-  if (_artboardBg) _artboardBg.visible = true;
   const a = document.createElement('a'); a.download = 'traceit.svg';
   a.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); a.click();
 });
@@ -1371,7 +1379,11 @@ document.getElementById('btn-artboard').addEventListener('click', e => {
 });
 document.addEventListener('click', e => {
   const pop = document.getElementById('artboard-popover');
-  if (!pop.contains(e.target) && e.target.id !== 'btn-artboard') pop.style.display = 'none';
+  if (!pop.contains(e.target) && e.target.id !== 'btn-artboard' && e.target.id !== 'chk-artboard') pop.style.display = 'none';
+});
+document.getElementById('chk-artboard').addEventListener('change', e => {
+  showArtboard = e.target.checked;
+  paper.view.draw();
 });
 document.getElementById('ab-apply').addEventListener('click', () => {
   const w = parseInt(document.getElementById('ab-w').value) || 800;
