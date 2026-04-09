@@ -121,6 +121,23 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
 </head>
 <body>
 
+<div id="artboard-popover" style="display:none;position:fixed;top:56px;right:310px;background:rgba(255,255,255,0.97);backdrop-filter:blur(12px);border:1px solid rgba(0,0,0,0.1);border-radius:14px;padding:12px 14px;z-index:200;box-shadow:0 4px 20px rgba(0,0,0,0.1);flex-direction:column;gap:8px;min-width:220px">
+  <div style="font-size:10px;color:rgba(0,0,0,0.4);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px">artboard size</div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <input type="number" id="ab-w" value="800" min="100" max="8000" style="width:70px;padding:5px 8px;border:1px solid rgba(0,0,0,0.12);border-radius:8px;font-size:12px;background:#f5f2ee;color:#1a1a1a;outline:none">
+    <span style="font-size:11px;color:rgba(0,0,0,0.3)">×</span>
+    <input type="number" id="ab-h" value="600" min="100" max="8000" style="width:70px;padding:5px 8px;border:1px solid rgba(0,0,0,0.12);border-radius:8px;font-size:12px;background:#f5f2ee;color:#1a1a1a;outline:none">
+    <button id="ab-apply" style="padding:5px 12px;border-radius:8px;border:none;background:#1a1a1a;color:#f5f2ee;font-size:11px;cursor:pointer">apply</button>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <button class="ab-preset" data-w="1920" data-h="1080" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,0,0,0.12);background:none;font-size:10px;cursor:pointer;color:rgba(0,0,0,0.5)">1920×1080</button>
+    <button class="ab-preset" data-w="1080" data-h="1080" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,0,0,0.12);background:none;font-size:10px;cursor:pointer;color:rgba(0,0,0,0.5)">1080×1080</button>
+    <button class="ab-preset" data-w="800" data-h="600" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,0,0,0.12);background:none;font-size:10px;cursor:pointer;color:rgba(0,0,0,0.5)">800×600</button>
+    <button class="ab-preset" data-w="1240" data-h="1754" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,0,0,0.12);background:none;font-size:10px;cursor:pointer;color:rgba(0,0,0,0.5)">A4</button>
+  </div>
+  <div style="font-size:10px;color:rgba(0,0,0,0.3)">space + drag to pan · scroll to zoom</div>
+</div>
+
 <div id="text-path-popover">
   <div class="tp-row">
     <input type="text" id="tp-text" placeholder="type something…" autocomplete="off">
@@ -165,6 +182,9 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
   <button class="tb-btn" id="btn-export-png">PNG</button>
   <span class="sep">·</span>
   <button class="tb-btn" id="btn-grid">grid</button>
+  <span class="sep">·</span>
+  <button class="tb-btn" id="btn-artboard">artboard</button>
+  <span id="zoom-indicator" style="font-size:11px;color:rgba(0,0,0,0.35);min-width:34px;text-align:right">100%</span>
 </div>
 
 <div id="panel">
