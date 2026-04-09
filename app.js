@@ -727,6 +727,54 @@ document.addEventListener('keydown', e => {
   }
 });
 
+document.getElementById('btn-import-svg').addEventListener('click', () => {
+  document.getElementById('input-import-svg').click();
+});
+document.getElementById('input-import-svg').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const svgStr = ev.target.result;
+    const imported = paper.project.importSVG(svgStr, { expandShapes: true, insert: false });
+    // collect all Paper.js Path objects from the imported group
+    const collected = [];
+    function collectPaths(item) {
+      if (item instanceof paper.Path) { collected.push(item); }
+      else if (item.children) { item.children.forEach(collectPaths); }
+    }
+    collectPaths(imported);
+    if (collected.length === 0) { alert('No paths found in SVG.'); return; }
+    // center the whole import around canvas center
+    const vw = paper.view.size.width, vh = paper.view.size.height;
+    const cx = vw / 2, cy = vh / 2;
+    // compute bounding box of all collected paths
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    collected.forEach(p => {
+      const b = p.bounds;
+      if (b.x < minX) minX = b.x; if (b.y < minY) minY = b.y;
+      if (b.x+b.width > maxX) maxX = b.x+b.width; if (b.y+b.height > maxY) maxY = b.y+b.height;
+    });
+    const dx = cx - (minX + maxX) / 2, dy = cy - (minY + maxY) / 2;
+    let firstPi = paths.length;
+    collected.forEach(p => {
+      p.translate(new paper.Point(dx, dy));
+      p.strokeColor = p.strokeColor || new paper.Color('#1a1a1a');
+      p.strokeWidth = p.strokeWidth || 1.5;
+      p.strokeJoin = 'round'; p.strokeCap = 'round';
+      paper.project.activeLayer.addChild(p);
+      const pObj = { paperPath: p, stroke: p.strokeColor.toCSS(true), sw: p.strokeWidth,
+        opacity: 1, visible: true, smooth: false, scale: 1, nodes: [] };
+      paths.push(pObj);
+    });
+    selected = { type: 'path', pi: firstPi };
+    document.getElementById('empty-hint').style.display = 'none';
+    pushHistory(); highlightSelected(); updatePanel(); paper.view.draw();
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
 document.getElementById('btn-delete').addEventListener('click', () => {
   if (!selected) return;
   if (selected.type === 'path') { paths[selected.pi].paperPath.remove(); paths.splice(selected.pi,1); selected=null; clearHighlight(); }
