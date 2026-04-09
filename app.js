@@ -472,12 +472,24 @@ function renderNodes(pObj, pi) {
 const _draw = paper.view.draw.bind(paper.view);
 paper.view.draw = function () {
   // apply path animations before drawing
+  const _scaleRestores = [];
   paths.forEach(p => {
     if (!p.loop) return;
     const basOp = p.opacity !== undefined ? p.opacity : 1;
     const basSw = p.sw || 1.5;
     p.paperPath.opacity      = (_playing && p.loop.opacity) ? Math.max(0, Math.min(1, _aval(p, 'opacity', basOp, 0, 1))) : basOp;
     p.paperPath.strokeWidth  = (_playing && p.loop.sw)      ? Math.max(0, _aval(p, 'sw', basSw, 0, 1))                   : basSw;
+    // scale: temporarily modify geometry so _draw() + renderNodes() both see scaled path
+    if (_playing && p.loop.scale) {
+      const basScale = p.scale || 1;
+      const animScale = Math.max(0.01, _aval(p, 'scale', basScale, 0, 1));
+      const f = animScale / basScale;
+      if (Math.abs(f - 1) > 0.0001) {
+        const center = p.paperPath.bounds.center;
+        p.paperPath.scale(f, center);
+        _scaleRestores.push({ p, invF: 1 / f, center });
+      }
+    }
   });
   _draw();
   _nodesCtx.clearRect(0, 0, _nodesCanvas.width, _nodesCanvas.height);
@@ -502,6 +514,9 @@ paper.view.draw = function () {
 
   // draw nodes
   paths.forEach((p, pi) => renderNodes(p, pi));
+
+  // restore temporarily scaled paths
+  _scaleRestores.forEach(({ p, invF, center }) => p.paperPath.scale(invF, center));
 
   // riso noise in world space
   if (paths.some(p => p.nodes.some(n => n.riso))) {
@@ -746,6 +761,9 @@ pt.onMouseDown = function (e) {
   }
 };
 pt.onMouseDrag = function (e) {
+  // middle-mouse pan is handled by window mousemove; bail out here to avoid
+  // simultaneously translating the selected path while panning the view
+  if (_midPanLast) return;
   if (_spacePan && _panLast) {
     paper.view.center = paper.view.center.subtract(e.delta);
     paper.view.draw(); return;
