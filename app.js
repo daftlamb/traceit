@@ -36,6 +36,7 @@ let currentDraw = null;
 let showGrid = false;
 let artboard = { x: 0, y: 0, w: 800, h: 600 }; // world coords, updated after init
 let showArtboard = false;
+let _isExporting = false;
 let _spacePan = false, _panLast = null;
 
 function lcg(seed) {
@@ -471,8 +472,8 @@ paper.view.draw = function () {
 
   _nodesCtx.restore(); // back to screen space
 
-  // artboard overlay (screen space) — only when enabled
-  if (showArtboard) {
+  // artboard overlay (screen space) — only when enabled and not exporting
+  if (showArtboard && !_isExporting) {
     const ap1 = paper.view.projectToView(new paper.Point(artboard.x, artboard.y));
     const ap2 = paper.view.projectToView(new paper.Point(artboard.x + artboard.w, artboard.y + artboard.h));
     const ax = ap1.x, ay = ap1.y, aw = ap2.x - ap1.x, ah = ap2.y - ap1.y;
@@ -1342,30 +1343,76 @@ document.getElementById('node-image-upload').addEventListener('change',e=>{
   img.src=URL.createObjectURL(file);
 });
 
-document.getElementById('btn-export-png').addEventListener('click',()=>{
+function _renderToArtboardCanvas(cb) {
+  // temporarily resize both canvases to artboard size at zoom=1
+  // so paths and nodes align perfectly at true artboard resolution
+  const savedZoom = paper.view.zoom;
+  const savedCenter = paper.view.center.clone();
+  const savedW = _canvas.width, savedH = _canvas.height;
+  const aw = artboard.w, ah = artboard.h;
+  const acx = artboard.x + aw / 2, acy = artboard.y + ah / 2;
+
+  _canvas.width = aw; _canvas.height = ah;
+  _nodesCanvas.width = aw; _nodesCanvas.height = ah;
+  paper.view.viewSize = new paper.Size(aw, ah);
+  paper.view.zoom = 1;
+  paper.view.center = new paper.Point(acx, acy);
+
+  _isExporting = true;
   paper.view.draw();
-  // crop to artboard in screen space
-  const ap1 = paper.view.projectToView(new paper.Point(artboard.x, artboard.y));
-  const ap2 = paper.view.projectToView(new paper.Point(artboard.x + artboard.w, artboard.y + artboard.h));
-  const sx = ap1.x, sy = ap1.y, sw = ap2.x - ap1.x, sh = ap2.y - ap1.y;
-  const out = document.createElement('canvas');
-  out.width = artboard.w; out.height = artboard.h;
-  const octx = out.getContext('2d');
-  octx.fillStyle = 'white';
-  octx.fillRect(0, 0, artboard.w, artboard.h);
-  octx.drawImage(_canvas, sx, sy, sw, sh, 0, 0, artboard.w, artboard.h);
-  // nodes: redraw without dim overlay for clean export
-  octx.drawImage(_nodesCanvas, sx, sy, sw, sh, 0, 0, artboard.w, artboard.h);
-  const a = document.createElement('a'); a.download = 'traceit.png'; a.href = out.toDataURL('image/png'); a.click();
+  _isExporting = false;
+
+  cb(_canvas, _nodesCanvas, aw, ah);
+
+  // restore
+  _canvas.width = savedW; _canvas.height = savedH;
+  _nodesCanvas.width = savedW; _nodesCanvas.height = savedH;
+  paper.view.viewSize = new paper.Size(savedW, savedH);
+  paper.view.zoom = savedZoom;
+  paper.view.center = savedCenter;
+  paper.view.draw();
+}
+
+document.getElementById('btn-export-png').addEventListener('click', () => {
+  _renderToArtboardCanvas((pc, nc, aw, ah) => {
+    const out = document.createElement('canvas');
+    out.width = aw; out.height = ah;
+    const octx = out.getContext('2d');
+    octx.fillStyle = 'white';
+    octx.fillRect(0, 0, aw, ah);
+    octx.drawImage(pc, 0, 0);
+    octx.drawImage(nc, 0, 0);
+    const a = document.createElement('a'); a.download = 'traceit.png';
+    a.href = out.toDataURL('image/png'); a.click();
+  });
 });
-document.getElementById('btn-export-svg').addEventListener('click',()=>{
-  const svgEl = paper.project.exportSVG({ asString: false });
-  svgEl.setAttribute('viewBox', `${artboard.x} ${artboard.y} ${artboard.w} ${artboard.h}`);
-  svgEl.setAttribute('width', artboard.w);
-  svgEl.setAttribute('height', artboard.h);
-  const svg = new XMLSerializer().serializeToString(svgEl);
-  const a = document.createElement('a'); a.download = 'traceit.svg';
-  a.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); a.click();
+
+document.getElementById('btn-export-svg').addEventListener('click', () => {
+  _renderToArtboardCanvas((pc, nc, aw, ah) => {
+    // Build SVG: Paper.js vector paths + nodes canvas as embedded raster
+    const vb = `${artboard.x} ${artboard.y} ${aw} ${ah}`;
+
+    // get Paper.js paths as SVG elements
+    let pathSVG = '';
+    paths.forEach(p => {
+      if (!p.visible || !p.paperPath) return;
+      const el = p.paperPath.exportSVG({ asString: true });
+      pathSVG += el + '\n';
+    });
+
+    // composite paths + nodes onto a temp canvas for raster embed
+    const tmp = document.createElement('canvas'); tmp.width = aw; tmp.height = ah;
+    const tc = tmp.getContext('2d');
+    tc.fillStyle = 'white'; tc.fillRect(0, 0, aw, ah);
+    tc.drawImage(pc, 0, 0); tc.drawImage(nc, 0, 0);
+    const imgData = tmp.toDataURL('image/png');
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" width="${aw}" height="${ah}">
+<image href="${imgData}" x="${artboard.x}" y="${artboard.y}" width="${aw}" height="${ah}"/>
+${pathSVG}</svg>`;
+    const a = document.createElement('a'); a.download = 'traceit.svg';
+    a.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); a.click();
+  });
 });
 
 // Feature 1: grid toggle
