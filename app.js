@@ -92,37 +92,41 @@ function applyRiso(ctx, x, y, r, fill, nextPt, nextR, srcCanvas, opts) {
   const erosion = opts.erosion !== undefined ? opts.erosion : 1.0;
   const spread = opts.spread !== undefined ? opts.spread : 0.38;
   const bridge = opts.bridge !== undefined ? opts.bridge : 1.4;
+  const z = opts.zoom || 1; // screen pixels per world unit
   const [fr, fg, fb] = parseColor(fill);
   const pad = r * 3;
-  const bx = Math.floor(x - r - pad), by = Math.floor(y - r - pad);
-  const bw = Math.ceil(r * 2 + pad * 2), bh = Math.ceil(r * 2 + pad * 2);
+  const bx_w = x - r - pad, by_w = y - r - pad; // world-space top-left
+  // offscreen canvas sized in screen pixels for crisp rendering
+  const bw = Math.ceil((r * 2 + pad * 2) * z), bh = Math.ceil((r * 2 + pad * 2) * z);
+  const ox = (x - bx_w) * z, oy = (y - by_w) * z; // circle center in offscreen px
+  const rz = r * z;
   const off = document.createElement('canvas');
   off.width = bw; off.height = bh;
   const oc = off.getContext('2d');
   if (srcCanvas) {
-    oc.drawImage(srcCanvas, x - r - bx, y - r - by, r * 2, r * 2);
+    oc.drawImage(srcCanvas, ox - rz, oy - rz, rz * 2, rz * 2);
   } else {
     oc.fillStyle = '#000';
-    oc.beginPath(); oc.arc(x - bx, y - by, r, 0, Math.PI * 2); oc.fill();
-    const edgeBlobs = Math.floor(r * 2.2 * bristle);
+    oc.beginPath(); oc.arc(ox, oy, rz, 0, Math.PI * 2); oc.fill();
+    const edgeBlobs = Math.floor(rz * 2.2 * bristle);
     for (let i = 0; i < edgeBlobs; i++) {
       const a = Math.random() * Math.PI * 2;
-      const d2 = r * (0.72 + Math.random() * 0.5);
-      const br = r * (0.07 + Math.random() * 0.16);
-      oc.beginPath(); oc.arc(x - bx + Math.cos(a) * d2, y - by + Math.sin(a) * d2, br, 0, Math.PI * 2); oc.fill();
+      const d2 = rz * (0.72 + Math.random() * 0.5);
+      const br = rz * (0.07 + Math.random() * 0.16);
+      oc.beginPath(); oc.arc(ox + Math.cos(a) * d2, oy + Math.sin(a) * d2, br, 0, Math.PI * 2); oc.fill();
     }
     if (nextPt) {
-      const dx = nextPt.x - x, dy = nextPt.y - y;
+      const dx = (nextPt.x - x) * z, dy = (nextPt.y - y) * z;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const gap = dist - r - (nextR || r);
-      if (gap < r * bridge) {
-        const t = Math.max(0, 1 - gap / (r * 1.4));
-        const blobR = Math.max(2, r * 0.4 * t);
+      const gap = dist - rz - (nextR || r) * z;
+      if (gap < rz * bridge) {
+        const t = Math.max(0, 1 - gap / (rz * 1.4));
+        const blobR = Math.max(2, rz * 0.4 * t);
         const steps = Math.ceil(dist / (blobR * 0.7));
         for (let i = 0; i <= steps; i++) {
           const f = i / steps;
           const br = blobR * (0.5 + 0.5 * Math.sin(f * Math.PI));
-          oc.beginPath(); oc.arc(x - bx + dx * f, y - by + dy * f, br, 0, Math.PI * 2); oc.fill();
+          oc.beginPath(); oc.arc(ox + dx * f, oy + dy * f, br, 0, Math.PI * 2); oc.fill();
         }
       }
     }
@@ -130,7 +134,7 @@ function applyRiso(ctx, x, y, r, fill, nextPt, nextR, srcCanvas, opts) {
   const off2 = document.createElement('canvas');
   off2.width = bw; off2.height = bh;
   const oc2 = off2.getContext('2d');
-  oc2.filter = `blur(${r * spread}px)`;
+  oc2.filter = `blur(${rz * spread}px)`;
   oc2.drawImage(off, 0, 0);
   oc2.filter = 'none';
   const imgd = oc2.getImageData(0, 0, bw, bh);
@@ -141,12 +145,18 @@ function applyRiso(ctx, x, y, r, fill, nextPt, nextR, srcCanvas, opts) {
   }
   oc2.putImageData(imgd, 0, 0);
   oc2.globalCompositeOperation = 'destination-out';
-  const holes = Math.floor(r * 0.5 * erosion);
+  const holes = Math.floor(rz * 0.5 * erosion);
   for (let i = 0; i < holes; i++) {
-    const a = Math.random() * Math.PI * 2, rd = Math.random() * r * 0.65;
-    oc2.beginPath(); oc2.arc(x - bx + Math.cos(a) * rd, y - by + Math.sin(a) * rd, 0.8 + Math.random() * 2.2, 0, Math.PI * 2); oc2.fill();
+    const a = Math.random() * Math.PI * 2, rd = Math.random() * rz * 0.65;
+    oc2.beginPath(); oc2.arc(ox + Math.cos(a) * rd, oy + Math.sin(a) * rd, 0.8 + Math.random() * 2.2, 0, Math.PI * 2); oc2.fill();
   }
-  ctx.drawImage(off2, bx, by);
+  // draw at screen coordinates (bypass view transform)
+  const m = ctx.getTransform();
+  const sx = m.a * bx_w + m.c * by_w + m.e;
+  const sy = m.b * bx_w + m.d * by_w + m.f;
+  ctx.save(); ctx.resetTransform();
+  ctx.drawImage(off2, sx, sy);
+  ctx.restore();
 }
 
 function drawShape(ctx, style, type, x, y, size, fill, rot, opacity, font, text, jx, jy, jr, js, sc, sw, noFill, noStroke, sx, sy, imgEl, riso, nextPt, nextR, charArr, charColors, seedIdx, risoOpts, dither, lineLen, curvature) {
@@ -356,6 +366,10 @@ function resolveNode(pObj, ni) {
   const n = pObj.nodes[ni];
   if (n.parentNi !== undefined && n.parentNi !== null && pObj.nodes[n.parentNi]) {
     const parent = pObj.nodes[n.parentNi];
+    // child inherits parent's loop flags for distribution params
+    const inheritedLoopKeys = ['offset','jitter','rotJitter','sizeJitter','sx','sy','opStart','opEnd'];
+    const mergedLoop = Object.assign({}, n.loop || {});
+    inheritedLoopKeys.forEach(k => { if (parent.loop && parent.loop[k]) mergedLoop[k] = true; });
     return Object.assign({}, n, {
       count:      parent.count,
       offset:     parent.offset,
@@ -370,6 +384,7 @@ function resolveNode(pObj, ni) {
       opStart:    parent.opStart,
       opEnd:      parent.opEnd,
       sizeEnd:    n.sizeEnd !== undefined ? n.sizeEnd : n.size,
+      loop:       mergedLoop,
     });
   }
   return n;
@@ -436,8 +451,9 @@ function renderNodes(pObj, pi) {
         if (pt2) { nextPt = { x: pt2.x, y: pt2.y }; nextR = size; }
       }
       const seedIdx = Math.floor(seeds[i*5+4] * 9999);
-      const risoOpts = { bristle: n.risoBristle||1, erosion: n.risoErosion||1, spread: n.risoSpread||0.38, bridge: n.risoBridge||1.4 };
-      const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, colorize: n.ditherColorize !== false, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5 } : null;
+      const _zoom = paper.view.zoom || 1;
+      const risoOpts = { bristle: n.risoBristle||1, erosion: n.risoErosion||1, spread: n.risoSpread||0.38, bridge: n.risoBridge||1.4, zoom: _zoom };
+      const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, colorize: n.ditherColorize !== false, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5, zoom: _zoom } : null;
       _nodesCtx.globalCompositeOperation = n.blendMode || 'source-over';
       window._ditherCurrentNode = n;
 
@@ -1612,24 +1628,25 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
   const dotSize = opts.dotSize || 2;
   const threshold = opts.threshold || 0.5;
   const mode = opts.imgMode || opts.mode || 'bayer';
+  const z = opts.zoom || 1;
   const pad = size * 1.2;
-  let ow = Math.ceil(size * 2 * scx + pad * 2);
-  let oh = Math.ceil(size * 2 * scy + pad * 2);
+  let ow = Math.ceil((size * 2 * scx + pad * 2) * z);
+  let oh = Math.ceil((size * 2 * scy + pad * 2) * z);
   // text type needs a wider canvas based on actual text measurement
   if (type === 'text' && opts.text) {
     const _mc = document.createElement('canvas'); _mc.width = 4; _mc.height = 4;
     const _mctx = _mc.getContext('2d');
     _mctx.font = `${size}px ${opts.font || 'sans-serif'}`;
     const _tw = _mctx.measureText(opts.text).width || size;
-    ow = Math.ceil(_tw + pad * 2 + 8);
-    oh = Math.ceil(size * 1.4 + pad * 2 + 8);
+    ow = Math.ceil((_tw + pad * 2 + 8) * z);
+    oh = Math.ceil((size * 1.4 + pad * 2 + 8) * z);
   }
   const off = document.createElement('canvas');
   off.width = ow; off.height = oh;
   const oc = off.getContext('2d');
   const cxo = ow / 2, cyo = oh / 2;
   oc.save();
-  oc.translate(cxo, cyo); oc.rotate(rot); oc.scale(scx, scy);
+  oc.translate(cxo, cyo); oc.scale(z, z); oc.rotate(rot); oc.scale(scx, scy);
   const _dNoFill = !!opts.noFill, _dNoStroke = !!opts.noStroke;
   const _dSw = opts.sw > 0 ? opts.sw : (opts.strokeWidth || 1.5);
   oc.fillStyle = '#000'; oc.strokeStyle = '#000'; oc.lineWidth = _dSw;
@@ -1720,11 +1737,21 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
     const bc = big.getContext('2d');
     bc.imageSmoothingEnabled = false;
     bc.drawImage(small, 0, 0, sw2, sh2, 0, 0, ow, oh);
+    const m2 = ctx.getTransform();
+    const sx2 = m2.a*(x - ow/2/z) + m2.c*(y - oh/2/z) + m2.e;
+    const sy2 = m2.b*(x - ow/2/z) + m2.d*(y - oh/2/z) + m2.f;
+    ctx.save(); ctx.resetTransform();
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(big, x - ow/2, y - oh/2);
+    ctx.drawImage(big, sx2, sy2);
     ctx.imageSmoothingEnabled = true;
+    ctx.restore();
   } else {
-    ctx.drawImage(off, x - ow/2, y - oh/2);
+    const m2 = ctx.getTransform();
+    const sx2 = m2.a*(x - ow/2/z) + m2.c*(y - oh/2/z) + m2.e;
+    const sy2 = m2.b*(x - ow/2/z) + m2.d*(y - oh/2/z) + m2.f;
+    ctx.save(); ctx.resetTransform();
+    ctx.drawImage(off, sx2, sy2);
+    ctx.restore();
   }
 }
 
