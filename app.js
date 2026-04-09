@@ -492,9 +492,11 @@ function buildPresetPath(pp, type, cx, cy, params) {
     const w = params.width || 400;
     const amp = params.amplitude || 60;
     const freq = params.frequency || 0.4;
-    const steps = 40;
+    // ensure at least ~20 samples per cycle to avoid catmull-rom overshoot
+    const cycles = freq * 40 / (2 * Math.PI);
+    const steps = Math.max(40, Math.ceil(cycles * 20));
     for (let i = 0; i <= steps; i++) {
-      pp.add(new paper.Point(cx - w/2 + i*(w/steps), cy + Math.sin(i*freq)*amp));
+      pp.add(new paper.Point(cx - w/2 + i*(w/steps), cy + Math.sin(i*(freq*40/steps))*amp));
     }
     pp.smooth({ type: 'catmull-rom' });
   }
@@ -562,6 +564,32 @@ document.getElementById('preset-half').addEventListener('change', e => {
 
 const pt = new paper.Tool();
 let _marquee = null;
+let _penDragging = false;
+let _penPreviewPath = null;
+
+function _penClearPreview() {
+  if (_penPreviewPath) { _penPreviewPath.remove(); _penPreviewPath = null; }
+}
+
+pt.onMouseMove = function (e) {
+  if ((activeTool === 'path' || activeTool === 'pen') && currentDraw && currentDraw.paperPath.segments.length > 0) {
+    _penClearPreview();
+    const last = currentDraw.paperPath.lastSegment;
+    _penPreviewPath = new paper.Path({ strokeColor:'#4a90e2', strokeWidth:1, opacity:0.5, dashArray:[4,4] });
+    if (activeTool === 'pen' && last.handleOut && last.handleOut.length > 0.5) {
+      // show curved preview using a temp bezier segment
+      const seg0 = new paper.Segment(last.point, null, last.handleOut.clone());
+      const seg1 = new paper.Segment(e.point);
+      _penPreviewPath.add(seg0); _penPreviewPath.add(seg1);
+    } else {
+      _penPreviewPath.add(last.point); _penPreviewPath.add(e.point);
+    }
+    paper.view.draw();
+  } else {
+    if (_penPreviewPath) { _penClearPreview(); paper.view.draw(); }
+  }
+};
+
 pt.onMouseDown = function (e) {
   if (activeTool === 'select') {
     // start marquee if no hit
@@ -576,7 +604,17 @@ pt.onMouseDown = function (e) {
       return;
     }
   }
-  if (activeTool === 'path') {
+  if (activeTool === 'pen') {
+    _penClearPreview();
+    if (!currentDraw) {
+      const pp = new paper.Path({ strokeColor:'#1a1a1a', strokeWidth:1.5, strokeJoin:'round', strokeCap:'round' });
+      currentDraw = { paperPath:pp, stroke:'#1a1a1a', sw:1.5, opacity:1, visible:true, smooth:false, scale:1, nodes:[] };
+      paths.push(currentDraw);
+    }
+    currentDraw.paperPath.add(new paper.Segment(e.point));
+    _penDragging = true;
+    paper.view.draw();
+  } else if (activeTool === 'path') {
     if (!currentDraw) {
       const pp = new paper.Path({ strokeColor:'#1a1a1a', strokeWidth:1.5, strokeJoin:'round', strokeCap:'round' });
       currentDraw = { paperPath:pp, stroke:'#1a1a1a', sw:1.5, opacity:1, visible:true, smooth:false, scale:1, nodes:[] };
@@ -599,6 +637,15 @@ pt.onMouseDown = function (e) {
   }
 };
 pt.onMouseDrag = function (e) {
+  if (activeTool === 'pen' && _penDragging && currentDraw) {
+    const segs = currentDraw.paperPath.segments;
+    const last = segs[segs.length - 1];
+    const delta = e.point.subtract(last.point);
+    last.handleOut = delta;
+    last.handleIn = delta.negate();
+    paper.view.draw();
+    return;
+  }
   if (activeTool === 'select') {
     if (_marquee) {
       _marquee.x2 = e.point.x; _marquee.y2 = e.point.y;
@@ -612,6 +659,7 @@ pt.onMouseDrag = function (e) {
   }
 };
 pt.onMouseUp = function (e) {
+  if (activeTool === 'pen') { _penDragging = false; }
   if (_marquee) {
     const mx1 = Math.min(_marquee.x1, _marquee.x2), mx2 = Math.max(_marquee.x1, _marquee.x2);
     const my1 = Math.min(_marquee.y1, _marquee.y2), my2 = Math.max(_marquee.y1, _marquee.y2);
@@ -629,15 +677,19 @@ pt.onMouseUp = function (e) {
 };
 pt.onKeyDown = function (e) {
   if (e.key === 'escape') {
+    _penClearPreview(); _penDragging = false;
     if (currentDraw && currentDraw.paperPath.segments.length < 2) { currentDraw.paperPath.remove(); paths.pop(); }
     currentDraw = null; paper.view.draw();
   }
 };
 
 document.getElementById('canvas').addEventListener('dblclick', () => {
-  if (activeTool === 'path' && currentDraw) {
+  if ((activeTool === 'path' || activeTool === 'pen') && currentDraw) {
+    _penClearPreview(); _penDragging = false;
+    // remove the last segment added by the second click of dblclick
+    if (currentDraw.paperPath.segments.length > 2) currentDraw.paperPath.removeSegment(currentDraw.paperPath.segments.length - 1);
     if (currentDraw.paperPath.segments.length >= 2) {
-      if (currentDraw.smooth) currentDraw.paperPath.smooth({ type:'catmull-rom' });
+      if (currentDraw.smooth && activeTool === 'path') currentDraw.paperPath.smooth({ type:'catmull-rom' });
       selected = { type:'path', pi:paths.length-1 };
     } else { currentDraw.paperPath.remove(); paths.pop(); }
     currentDraw = null;
@@ -648,20 +700,26 @@ document.getElementById('canvas').addEventListener('dblclick', () => {
 
 function setTool(t) {
   activeTool = t;
-  if (t !== 'path' && currentDraw) {
+  if (t !== 'path' && t !== 'pen' && currentDraw) {
+    _penClearPreview(); _penDragging = false;
     if (currentDraw.paperPath.segments.length < 2) { currentDraw.paperPath.remove(); paths.pop(); }
     currentDraw = null;
   }
-  ['select','path'].forEach(n => document.getElementById('btn-'+n).classList.toggle('active', n === t));
-  document.getElementById('canvas').style.cursor = t === 'path' ? 'crosshair' : 'default';
+  if (t === 'select') { _penClearPreview(); }
+  ['select','path','pen'].forEach(n => {
+    const b = document.getElementById('btn-'+n); if (b) b.classList.toggle('active', n === t);
+  });
+  document.getElementById('canvas').style.cursor = (t === 'path' || t === 'pen') ? 'crosshair' : 'default';
 }
 document.getElementById('btn-select').addEventListener('click', () => setTool('select'));
 document.getElementById('btn-path').addEventListener('click', () => setTool('path'));
+document.getElementById('btn-pen').addEventListener('click', () => setTool('pen'));
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.key === 'v' || e.key === 'V') setTool('select');
   if (e.key === 'p' || e.key === 'P') setTool('path');
+  if (e.key === 'b' || e.key === 'B') setTool('pen');
   if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
     if (selected.type === 'path') { paths[selected.pi].paperPath.remove(); paths.splice(selected.pi,1); selected=null; clearHighlight(); }
     else if (selected.type === 'node') { paths[selected.pi].nodes.splice(selected.ni,1); selected={type:'path',pi:selected.pi}; highlightSelected(); }
