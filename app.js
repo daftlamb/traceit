@@ -727,6 +727,81 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ── text → path (opentype.js + Outfit font) ──────────────────────────────
+let _otFont = null;
+const OUTFIT_URL = 'https://fonts.gstatic.com/s/outfit/v15/QGYyz_MVcBeNP4NjuGObqx1XmO1I4TC1C4E.ttf';
+opentype.load(OUTFIT_URL, (err, font) => {
+  const status = document.getElementById('text-path-font-status');
+  if (err) { if (status) status.textContent = 'font failed'; return; }
+  _otFont = font;
+  if (status) status.textContent = 'Outfit';
+});
+
+document.getElementById('btn-text-path').addEventListener('click', e => {
+  const pop = document.getElementById('text-path-popover');
+  pop.classList.toggle('open');
+  e.stopPropagation();
+});
+document.addEventListener('click', e => {
+  const pop = document.getElementById('text-path-popover');
+  if (!pop.contains(e.target) && e.target.id !== 'btn-text-path') pop.classList.remove('open');
+});
+document.getElementById('tp-size').addEventListener('input', e => {
+  document.getElementById('tp-size-val').textContent = e.target.value;
+});
+document.getElementById('tp-add').addEventListener('click', () => {
+  if (!_otFont) { alert('Font not loaded yet, please wait.'); return; }
+  const text = document.getElementById('tp-text').value.trim();
+  if (!text) return;
+  const size = parseInt(document.getElementById('tp-size').value) || 120;
+
+  // build one combined SVG path string from all glyphs
+  const otPath = _otFont.getPath(text, 0, 0, size);
+  const svgPathD = otPath.toPathData(3);
+  if (!svgPathD) return;
+
+  // wrap in minimal SVG so paper can parse it
+  const svgStr = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${svgPathD}"/></svg>`;
+  const imported = paper.project.importSVG(svgStr, { expandShapes: true, insert: false });
+
+  const collected = [];
+  function collectPaths(item) {
+    if (item instanceof paper.Path) collected.push(item);
+    else if (item instanceof paper.CompoundPath) collected.push(item);
+    else if (item.children) item.children.forEach(collectPaths);
+  }
+  collectPaths(imported);
+  if (collected.length === 0) return;
+
+  // center on canvas
+  const vw = paper.view.size.width, vh = paper.view.size.height;
+  const cx = vw / 2, cy = vh / 2;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  collected.forEach(p => {
+    const b = p.bounds;
+    if (b.x < minX) minX = b.x; if (b.y < minY) minY = b.y;
+    if (b.x + b.width > maxX) maxX = b.x + b.width;
+    if (b.y + b.height > maxY) maxY = b.y + b.height;
+  });
+  const dx = cx - (minX + maxX) / 2, dy = cy - (minY + maxY) / 2;
+
+  const firstPi = paths.length;
+  collected.forEach(p => {
+    p.translate(new paper.Point(dx, dy));
+    p.strokeColor = new paper.Color('#1a1a1a');
+    p.strokeWidth = 1.5;
+    p.fillColor = null;
+    paper.project.activeLayer.addChild(p);
+    const pObj = { paperPath: p, stroke: '#1a1a1a', sw: 1.5, opacity: 1, visible: true, smooth: false, scale: 1, nodes: [] };
+    paths.push(pObj);
+  });
+
+  selected = { type: 'path', pi: firstPi };
+  document.getElementById('empty-hint').style.display = 'none';
+  document.getElementById('text-path-popover').classList.remove('open');
+  pushHistory(); highlightSelected(); updatePanel(); paper.view.draw();
+});
+
 document.getElementById('btn-import-svg').addEventListener('click', () => {
   document.getElementById('input-import-svg').click();
 });
