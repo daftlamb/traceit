@@ -39,6 +39,33 @@ let showArtboard = false;
 let _isExporting = false;
 let _spacePan = false, _panLast = null;
 
+// ── Animation engine ────────────────────────────────────────────────────────
+let _playing = false;
+let _animT = 0;       // cycles elapsed (1 unit = 1 full sin cycle)
+let _animRaf = null;
+let _animLastTime = null;
+
+function _tickAnim(ts) {
+  if (_animLastTime !== null) {
+    const dt = (ts - _animLastTime) / 1000;
+    const speed = parseFloat(document.getElementById('anim-speed').value) || 1;
+    _animT += dt * speed;
+  }
+  _animLastTime = ts;
+  paper.view.draw();
+  if (_playing) _animRaf = requestAnimationFrame(_tickAnim);
+}
+
+// Return animated value for a node param; falls back to base when not playing/looped
+function _aval(n, key, base, i, count) {
+  if (!_playing || !n.loop || !n.loop[key]) return base;
+  const phase = count > 1 ? (i / count) * Math.PI * 2 : 0;
+  const t = _animT * Math.PI * 2 + phase;
+  if (key === 'offset') return (base + _animT) % 1;          // continuous path travel
+  if (key === 'rotation') return (base + _animT * 360) % 360; // continuous spin
+  return base + base * 0.8 * Math.sin(t);                    // oscillate ±80% of base
+}
+
 function lcg(seed) {
   let s = seed >>> 0;
   return () => { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 0xffffffff; };
@@ -365,21 +392,29 @@ function renderNodes(pObj, pi) {
     const charArr = (n.charArray || '').split('').filter(c => c.trim());
     const charColors = (n.colorArray || '').split(',').map(c => c.trim()).filter(Boolean);
 
+    const _animOffset = _aval(n, 'offset', n.offset || 0, 0, 1);
     for (let i = 0; i < count; i++) {
-      const t = count === 1 ? totalLen * (n.offset || 0) : (i / count) * totalLen;
+      const t = count === 1 ? totalLen * _animOffset : ((_animOffset + i / count) % 1) * totalLen;
       const pt = pp.getPointAt(Math.min(t, totalLen - 0.01));
       const tan = pp.getTangentAt(Math.min(t, totalLen - 0.01));
       if (!pt) continue;
       const frac = count > 1 ? i / (count - 1) : 0;
-      const sz0 = n.size || 16, sz1 = n.sizeEnd !== undefined ? n.sizeEnd : sz0;
-      const op0 = n.opStart !== undefined ? n.opStart : 1, op1 = n.opEnd !== undefined ? n.opEnd : 1;
+      const sz0 = Math.max(1, _aval(n, 'size', n.size || 16, i, count));
+      const sz1 = Math.max(1, _aval(n, 'sizeEnd', n.sizeEnd !== undefined ? n.sizeEnd : n.size || 16, i, count));
+      const op0 = _aval(n, 'opStart', n.opStart !== undefined ? n.opStart : 1, i, count);
+      const op1 = _aval(n, 'opEnd',   n.opEnd   !== undefined ? n.opEnd   : 1, i, count);
       let size = sz0 + (sz1 - sz0) * frac;
-      const opacity = op0 + (op1 - op0) * frac;
-      const jx = n.jitter ? (seeds[i*5] - 0.5) * n.jitter * 2 : 0;
-      const jy = n.jitter ? (seeds[i*5+1] - 0.5) * n.jitter * 2 : 0;
-      const jr = n.rotJitter ? (seeds[i*5+2] - 0.5) * n.rotJitter * Math.PI / 90 : 0;
-      const js = n.sizeJitter ? (seeds[i*5+3] - 0.5) * n.sizeJitter * 2 : 0;
-      const rot = (n.follow ? Math.atan2(tan.y, tan.x) : 0) + (n.rotation || 0) * Math.PI / 180;
+      const opacity = Math.max(0, Math.min(1, op0 + (op1 - op0) * frac));
+      const _aj = _aval(n, 'jitter',     n.jitter     || 0, i, count);
+      const _ar = _aval(n, 'rotJitter',  n.rotJitter  || 0, i, count);
+      const _as = _aval(n, 'sizeJitter', n.sizeJitter || 0, i, count);
+      const jx = _aj ? (seeds[i*5]   - 0.5) * _aj * 2 : 0;
+      const jy = _aj ? (seeds[i*5+1] - 0.5) * _aj * 2 : 0;
+      const jr = _ar ? (seeds[i*5+2] - 0.5) * _ar * Math.PI / 90 : 0;
+      const js = _as ? (seeds[i*5+3] - 0.5) * _as * 2 : 0;
+      const _asx = _aval(n, 'sx', n.sx || 100, i, count);
+      const _asy = _aval(n, 'sy', n.sy || 100, i, count);
+      const rot = (n.follow ? Math.atan2(tan.y, tan.x) : 0) + (_aval(n, 'rotation', n.rotation || 0, i, count)) * Math.PI / 180;
       let px = pt.x, py = pt.y;
       if (hasTilt) {
         const dx = pt.x - bcx, dy = pt.y - bcy;
@@ -411,7 +446,7 @@ function renderNodes(pObj, pi) {
       drawShape(_nodesCtx, n.style||'flat', n.type||'circle', px, py, size,
         n.fill||'#c8b8a2', rot, opacity, n.font, n.text,
         jx, jy, jr, js, n.strokeColor||'#1a1a1a', n.strokeWidth||0,
-        n.noFill, n.noStroke, n.sx||100, n.sy||100,
+        n.noFill, n.noStroke, _asx, _asy,
         n.imgEl||null, !!n.riso, nextPt, nextR, charArr, charColors, seedIdx, risoOpts, ditherOpts, n.lineLen, n.curvature);
     }
     _nodesCtx.globalCompositeOperation = 'source-over';
@@ -1223,6 +1258,10 @@ function updatePanel() {
       if (n.curvature===undefined) n.curvature = 50;
       sv('node-curvature', n.curvature); tv('node-curvature-val', n.curvature);
     }
+    // sync loop buttons
+    document.querySelectorAll('.loop-btn').forEach(btn => {
+      btn.classList.toggle('on', !!(n.loop && n.loop[btn.dataset.loop]));
+    });
   }
 }
 
@@ -1413,6 +1452,73 @@ ${pathSVG}</svg>`;
     const a = document.createElement('a'); a.download = 'traceit.svg';
     a.href = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); a.click();
   });
+});
+
+// ── Play / Pause ─────────────────────────────────────────────────────────────
+document.getElementById('btn-play').addEventListener('click', () => {
+  _playing = !_playing;
+  document.getElementById('btn-play').textContent = _playing ? '⏹ stop' : '▶ play';
+  document.getElementById('btn-play').classList.toggle('active', _playing);
+  if (_playing) {
+    _animLastTime = null;
+    _animRaf = requestAnimationFrame(_tickAnim);
+  } else {
+    if (_animRaf) cancelAnimationFrame(_animRaf);
+    paper.view.draw();
+  }
+});
+
+// ── Loop button toggle (delegated) ───────────────────────────────────────────
+document.getElementById('panel-body').addEventListener('click', e => {
+  const btn = e.target.closest('.loop-btn');
+  if (!btn) return;
+  if (!selected || selected.type !== 'node') return;
+  const n = paths[selected.pi].nodes[selected.ni];
+  const key = btn.dataset.loop;
+  n.loop = n.loop || {};
+  n.loop[key] = !n.loop[key];
+  btn.classList.toggle('on', !!n.loop[key]);
+});
+
+// ── GIF export ───────────────────────────────────────────────────────────────
+document.getElementById('btn-export-gif').addEventListener('click', () => {
+  const hasLoop = paths.some(p => p.nodes.some(n => n.loop && Object.values(n.loop).some(Boolean)));
+  if (!hasLoop) { alert('No loop parameters active. Enable ∿ on a slider first.'); return; }
+
+  const btn = document.getElementById('btn-export-gif');
+  btn.textContent = 'recording…'; btn.disabled = true;
+
+  const frames = 24, delay = 42; // ~24fps, 1-second loop
+  const savedT = _animT, savedPlaying = _playing;
+  _playing = true;
+
+  const { GIFEncoder, quantize, applyPalette } = gifenc;
+  const encoder = GIFEncoder();
+
+  // collect frames synchronously (offscreen render)
+  for (let f = 0; f < frames; f++) {
+    _animT = f / frames;
+    _renderToArtboardCanvas((pc, nc, aw, ah) => {
+      const tmp = document.createElement('canvas'); tmp.width = aw; tmp.height = ah;
+      const tc = tmp.getContext('2d');
+      tc.fillStyle = 'white'; tc.fillRect(0, 0, aw, ah);
+      tc.drawImage(pc, 0, 0); tc.drawImage(nc, 0, 0);
+      const imgd = tc.getImageData(0, 0, aw, ah);
+      const palette = quantize(imgd.data, 256, { format: 'rgb565' });
+      const index = applyPalette(imgd.data, palette);
+      encoder.writeFrame(index, aw, ah, { palette, delay });
+    });
+  }
+  encoder.finish();
+  const buf = encoder.bytes();
+  const blob = new Blob([buf], { type: 'image/gif' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.download = 'traceit.gif'; a.href = url; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+  _animT = savedT; _playing = savedPlaying;
+  btn.textContent = 'GIF'; btn.disabled = false;
+  paper.view.draw();
 });
 
 // Feature 1: grid toggle
