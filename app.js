@@ -471,6 +471,14 @@ function renderNodes(pObj, pi) {
 
 const _draw = paper.view.draw.bind(paper.view);
 paper.view.draw = function () {
+  // apply path animations before drawing
+  paths.forEach(p => {
+    if (!p.loop) return;
+    const basOp = p.opacity !== undefined ? p.opacity : 1;
+    const basSw = p.sw || 1.5;
+    p.paperPath.opacity      = (_playing && p.loop.opacity) ? Math.max(0, Math.min(1, _aval(p, 'opacity', basOp, 0, 1))) : basOp;
+    p.paperPath.strokeWidth  = (_playing && p.loop.sw)      ? Math.max(0, _aval(p, 'sw', basSw, 0, 1))                   : basSw;
+  });
   _draw();
   _nodesCtx.clearRect(0, 0, _nodesCanvas.width, _nodesCanvas.height);
 
@@ -873,7 +881,18 @@ document.addEventListener('keydown', e => {
   if (e.key === 'b' || e.key === 'B') setTool('pen');
   if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
     if (selected.type === 'path') { paths[selected.pi].paperPath.remove(); paths.splice(selected.pi,1); selected=null; clearHighlight(); }
-    else if (selected.type === 'node') { paths[selected.pi].nodes.splice(selected.ni,1); selected={type:'path',pi:selected.pi}; highlightSelected(); }
+    else if (selected.type === 'node') {
+      const _dpi = selected.pi, _dni = selected.ni;
+      const _dnodes = paths[_dpi].nodes;
+      _dnodes.splice(_dni, 1);
+      _dnodes.forEach(nd => {
+        if (nd.parentNi !== null && nd.parentNi !== undefined) {
+          if (nd.parentNi === _dni) nd.parentNi = null;
+          else if (nd.parentNi > _dni) nd.parentNi--;
+        }
+      });
+      selected = {type:'path', pi:_dpi}; highlightSelected();
+    }
     updatePanel(); paper.view.draw();
   }
 });
@@ -1028,7 +1047,18 @@ document.getElementById('input-import-svg').addEventListener('change', e => {
 document.getElementById('btn-delete').addEventListener('click', () => {
   if (!selected) return;
   if (selected.type === 'path') { paths[selected.pi].paperPath.remove(); paths.splice(selected.pi,1); selected=null; clearHighlight(); }
-  else if (selected.type === 'node') { paths[selected.pi].nodes.splice(selected.ni,1); selected={type:'path',pi:selected.pi}; highlightSelected(); }
+  else if (selected.type === 'node') {
+    const _dpi = selected.pi, _dni = selected.ni;
+    const _dnodes = paths[_dpi].nodes;
+    _dnodes.splice(_dni, 1);
+    _dnodes.forEach(nd => {
+      if (nd.parentNi !== null && nd.parentNi !== undefined) {
+        if (nd.parentNi === _dni) nd.parentNi = null;
+        else if (nd.parentNi > _dni) nd.parentNi--;
+      }
+    });
+    selected = {type:'path', pi:_dpi}; highlightSelected();
+  }
   updatePanel(); paper.view.draw();
 });
 document.getElementById('btn-clear').addEventListener('click', () => {
@@ -1156,6 +1186,10 @@ function updatePanel() {
     document.getElementById('path-op').value = p.opacity||1; document.getElementById('path-op-val').textContent = Math.round((p.opacity||1)*100)+'%';
     document.getElementById('path-visible').checked = p.visible!==false;
     document.getElementById('path-smooth').checked = !!p.smooth;
+    // sync path loop buttons
+    document.querySelectorAll('.path-loop-btn').forEach(btn => {
+      btn.classList.toggle('on', !!(p.loop && p.loop[btn.dataset.pathloop]));
+    });
     const sc = p.scale||1; document.getElementById('path-scale').value = Math.round(sc*100); document.getElementById('path-scale-val').textContent = Math.round(sc*100)+'%';
     // preset shape params
     const presetWrap = document.getElementById('preset-shape-params');
@@ -1486,6 +1520,19 @@ document.getElementById('btn-play').addEventListener('click', () => {
 
 // ── Loop button toggle (delegated) ───────────────────────────────────────────
 document.getElementById('panel-body').addEventListener('click', e => {
+  // path loop buttons
+  const pathBtn = e.target.closest('.path-loop-btn');
+  if (pathBtn) {
+    if (!selected || selected.type !== 'path') return;
+    const p = paths[selected.pi];
+    const key = pathBtn.dataset.pathloop;
+    p.loop = p.loop || {};
+    p.loop[key] = !p.loop[key];
+    pathBtn.classList.toggle('on', !!p.loop[key]);
+    paper.view.draw();
+    return;
+  }
+  // node loop buttons
   const btn = e.target.closest('.loop-btn');
   if (!btn) return;
   if (!selected || selected.type !== 'node') return;
@@ -1498,7 +1545,9 @@ document.getElementById('panel-body').addEventListener('click', e => {
 
 // ── GIF export ───────────────────────────────────────────────────────────────
 document.getElementById('btn-export-gif').addEventListener('click', () => {
-  const hasLoop = paths.some(p => p.nodes.some(n => n.loop && Object.values(n.loop).some(Boolean)));
+  const hasLoop = paths.some(p =>
+    (p.loop && Object.values(p.loop).some(Boolean)) ||
+    p.nodes.some(n => n.loop && Object.values(n.loop).some(Boolean)));
   if (!hasLoop) { alert('No loop parameters active. Enable ∿ on a slider first.'); return; }
 
   const btn = document.getElementById('btn-export-gif');
