@@ -479,7 +479,7 @@ paper.view.draw = function () {
     const cw = _nodesCanvas.width, ch = _nodesCanvas.height;
 
     // dim outside
-    _nodesCtx.fillStyle = 'rgba(0,0,0,0.08)';
+    _nodesCtx.fillStyle = 'rgba(0,0,0,0.02)';
     _nodesCtx.fillRect(0, 0, cw, ay);
     _nodesCtx.fillRect(0, ay + ah, cw, ch - ay - ah);
     _nodesCtx.fillRect(0, ay, ax, ah);
@@ -848,34 +848,53 @@ document.addEventListener('click', e => {
 document.getElementById('tp-size').addEventListener('input', e => {
   document.getElementById('tp-size-val').textContent = e.target.value;
 });
+// Convert opentype.js path commands directly to Paper.js paths — no importSVG, no regex
+function otCommandsToPaperPaths(commands) {
+  const result = [];
+  let cur = null, lastX = 0, lastY = 0;
+  commands.forEach(cmd => {
+    if (cmd.type === 'M') {
+      if (cur) { if (cur.segments.length > 1) result.push(cur); else cur.remove(); }
+      cur = new paper.Path();
+      cur.add(new paper.Segment(new paper.Point(cmd.x, cmd.y)));
+      lastX = cmd.x; lastY = cmd.y;
+    } else if (cmd.type === 'L') {
+      if (!cur) return;
+      cur.add(new paper.Segment(new paper.Point(cmd.x, cmd.y)));
+      lastX = cmd.x; lastY = cmd.y;
+    } else if (cmd.type === 'C') {
+      if (!cur) return;
+      cur.lastSegment.handleOut = new paper.Point(cmd.x1 - lastX, cmd.y1 - lastY);
+      cur.add(new paper.Segment(new paper.Point(cmd.x, cmd.y), new paper.Point(cmd.x2 - cmd.x, cmd.y2 - cmd.y), null));
+      lastX = cmd.x; lastY = cmd.y;
+    } else if (cmd.type === 'Q') {
+      if (!cur) return;
+      // convert quadratic to cubic
+      const cx1 = lastX + 2/3 * (cmd.x1 - lastX), cy1 = lastY + 2/3 * (cmd.y1 - lastY);
+      const cx2 = cmd.x  + 2/3 * (cmd.x1 - cmd.x),  cy2 = cmd.y  + 2/3 * (cmd.y1 - cmd.y);
+      cur.lastSegment.handleOut = new paper.Point(cx1 - lastX, cy1 - lastY);
+      cur.add(new paper.Segment(new paper.Point(cmd.x, cmd.y), new paper.Point(cx2 - cmd.x, cy2 - cmd.y), null));
+      lastX = cmd.x; lastY = cmd.y;
+    } else if (cmd.type === 'Z') {
+      if (cur) { cur.closed = true; if (cur.segments.length > 1) result.push(cur); else cur.remove(); cur = null; }
+    }
+  });
+  if (cur) { if (cur.segments.length > 1) result.push(cur); else cur.remove(); }
+  return result;
+}
+
 document.getElementById('tp-add').addEventListener('click', () => {
   if (!_otFont) { alert('Font not loaded yet, please wait.'); return; }
   const text = document.getElementById('tp-text').value.trim();
   if (!text) return;
   const size = parseInt(document.getElementById('tp-size').value) || 120;
 
-  // Use getPaths() per character so each glyph is independent.
-  // Each glyph's path data may contain multiple subpaths (e.g. 'o' has outer+inner).
-  // Split at 'M' boundaries so each closed contour becomes its own Paper.js Path.
+  // getPaths() gives one opentype Path per glyph; convert commands directly to Paper.js paths
   const glyphPaths = _otFont.getPaths(text, 0, 0, size);
   const collected = [];
-
   glyphPaths.forEach(gp => {
-    const d = gp.toPathData(3);
-    if (!d || d.trim() === '') return;
-    // split compound path data into individual closed subpaths at 'Z' boundaries
-    const subDs = d.match(/M[^M]*/gi) || [d];
-    subDs.forEach(sub => {
-      const s = sub.trim(); if (!s) return;
-      const svgStr = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${s}"/></svg>`;
-      const imp = paper.project.importSVG(svgStr, { expandShapes: true, insert: false });
-      function collect(item) {
-        if (item instanceof paper.Path) { if (item.segments.length > 0) collected.push(item); }
-        else if (item instanceof paper.CompoundPath) { item.children.forEach(collect); }
-        else if (item.children) item.children.forEach(collect);
-      }
-      collect(imp);
-    });
+    if (!gp.commands || gp.commands.length === 0) return;
+    otCommandsToPaperPaths(gp.commands).forEach(p => collected.push(p));
   });
 
   if (collected.length === 0) return;
