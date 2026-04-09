@@ -453,7 +453,7 @@ function renderNodes(pObj, pi) {
       const seedIdx = Math.floor(seeds[i*5+4] * 9999);
       const _zoom = paper.view.zoom || 1;
       const risoOpts = { bristle: n.risoBristle||1, erosion: n.risoErosion||1, spread: n.risoSpread||0.38, bridge: n.risoBridge||1.4, zoom: _zoom };
-      const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, colorize: n.ditherColorize !== false, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5, zoom: _zoom } : null;
+      const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, feather: n.ditherFeather||0, colorize: n.ditherColorize !== false, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5, zoom: _zoom } : null;
       _nodesCtx.globalCompositeOperation = n.blendMode || 'source-over';
       window._ditherCurrentNode = n;
 
@@ -1686,6 +1686,18 @@ function applyDither(ctx, x, y, size, fill, type, rot, scx, scy, opts) {
     if (!_dNoStroke && _dSw > 0) { oc.lineWidth = _dSw; oc.strokeStyle = '#000'; oc.strokeText(opts.text, 0, 0); }
   }
   oc.restore();
+  // feather: blur the shape before dithering to create soft scattered edge
+  const feather = (opts.feather || 0) * z;
+  if (feather > 0) {
+    const blurred = document.createElement('canvas');
+    blurred.width = ow; blurred.height = oh;
+    const bc = blurred.getContext('2d');
+    bc.filter = `blur(${feather}px)`;
+    bc.drawImage(off, 0, 0);
+    bc.filter = 'none';
+    oc.clearRect(0, 0, ow, oh);
+    oc.drawImage(blurred, 0, 0);
+  }
   const imgd = oc.getImageData(0,0,ow,oh);
   const d = imgd.data;
   const [fr,fg,fb] = parseColor(fill);
@@ -1779,6 +1791,7 @@ document.getElementById('node-dither').addEventListener('change', e => {
 });
 bR('dither-dot','dither-dot-val',null,v=>{const n=gN();if(n)n.ditherDot=v;});
 bR('dither-threshold','dither-threshold-val',null,v=>{const n=gN();if(n)n.ditherThreshold=v;});
+bR('dither-feather','dither-feather-val',null,v=>{const n=gN();if(n)n.ditherFeather=v;});
 document.getElementById('node-dither-colorize').addEventListener('change', e => {
   const n = gN(); if (!n) return;
   n.ditherColorize = e.target.checked;
@@ -1816,6 +1829,8 @@ updatePanel = function() {
       document.getElementById('dither-dot-val').textContent = n.ditherDot||2;
       document.getElementById('dither-threshold').value = n.ditherThreshold||0.5;
       document.getElementById('dither-threshold-val').textContent = n.ditherThreshold||0.5;
+      document.getElementById('dither-feather').value = n.ditherFeather||0;
+      document.getElementById('dither-feather-val').textContent = n.ditherFeather||0;
       document.getElementById('dither-img-mode-row').style.display = 'block';
       document.getElementById('dither-img-mode').value = n.ditherImgMode || 'bayer';
       document.getElementById('node-dither-colorize-row').style.display = 'flex';
