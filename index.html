@@ -716,13 +716,13 @@ function buildImgArrayThumbs(n) {
   });
 
   function getPaperPaths() {
-    if (typeof paper === 'undefined' || !paper.project) return [];
+    // Use the global `paths` array from app.js; each entry has a .paperPath (paper.Path)
+    if (typeof paths === 'undefined' || !Array.isArray(paths)) return [];
     var items = [];
-    paper.project.getItems({ class: paper.Path }).forEach(function(p) {
-      if (p.visible && p.segments && p.segments.length > 0) items.push(p);
-    });
-    paper.project.getItems({ class: paper.CompoundPath }).forEach(function(p) {
-      if (p.visible) items.push(p);
+    paths.forEach(function(p) {
+      if (p.paperPath && p.paperPath.visible && p.paperPath.segments && p.paperPath.segments.length > 0) {
+        items.push(p.paperPath);
+      }
     });
     return items;
   }
@@ -759,14 +759,15 @@ function buildImgArrayThumbs(n) {
 
     getPaperPaths().forEach(function(path) {
       var bounds = path.bounds;
-      var cx = bounds.center.x;
-      var cy = bounds.center.y;
+      var cx = path.position.x;
+      var cy = path.position.y;
       var w = Math.max(bounds.width, 10);
       var h = Math.max(bounds.height, 10);
-      originalPositions.push({ path: path, x: cx, y: cy, rotation: path.rotation });
+      var origRotation = path.rotation || 0;
+      originalPositions.push({ path: path, x: cx, y: cy, rotation: origRotation });
       var body = Bodies.rectangle(cx, cy, w, h, {
         restitution: 0.3, friction: 0.5, frictionAir: 0.01,
-        angle: path.rotation * Math.PI / 180
+        angle: origRotation * Math.PI / 180
       });
       body._paperPath = path;
       bodies.push(body);
