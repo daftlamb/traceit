@@ -6,7 +6,6 @@
 <title>Trace It</title>
 <script src="https://cdn.jsdelivr.net/npm/paper@0.12.17/dist/paper-full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gifenc@1.0.3/dist/gifenc.umd.js"></script>
 <style>
@@ -187,9 +186,6 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
   <button class="tb-btn" id="btn-export-png">PNG</button>
   <span class="sep">·</span>
   <button class="tb-btn" id="btn-grid">grid</button>
-  <span class="sep">·</span>
-  <button class="tb-btn" id="btn-physics">⚛ physics</button>
-  <span class="sep">·</span>
   <button class="tb-btn" id="btn-artboard">artboard</button>
   <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(0,0,0,0.4);cursor:pointer"><input type="checkbox" id="chk-artboard"> show</label>
   <span id="zoom-indicator" style="font-size:11px;color:rgba(0,0,0,0.35);min-width:34px;text-align:right">100%</span>
@@ -697,118 +693,6 @@ function buildImgArrayThumbs(n) {
 }
 </script>
 
-<canvas id="physics-overlay" style="position:fixed;top:0;left:0;right:260px;bottom:0;width:calc(100vw - 260px);height:100vh;pointer-events:none;z-index:50;display:none;"></canvas>
-
-<script>
-(function() {
-  var physicsActive = false;
-  var engine, runner, world;
-  var bodies = [];
-  var originalPositions = [];
-  var animFrame = null;
-
-  var btn = document.getElementById('btn-physics');
-  var overlayCanvas = document.getElementById('physics-overlay');
-
-  btn.addEventListener('click', function() {
-    if (!physicsActive) startPhysics();
-    else stopPhysics();
-  });
-
-  function getPaperPaths() {
-    // Use the global `paths` array from app.js; each entry has a .paperPath (paper.Path)
-    if (typeof paths === 'undefined' || !Array.isArray(paths)) return [];
-    var items = [];
-    paths.forEach(function(p) {
-      if (p.paperPath && p.paperPath.visible && p.paperPath.segments && p.paperPath.segments.length > 0) {
-        items.push(p.paperPath);
-      }
-    });
-    return items;
-  }
-
-  function startPhysics() {
-    var Matter = window.Matter;
-    if (!Matter) { alert('Matter.js not loaded'); return; }
-    physicsActive = true;
-    btn.classList.add('active');
-
-    var Engine = Matter.Engine, Runner = Matter.Runner,
-        World = Matter.World, Bodies = Matter.Bodies;
-
-    engine = Engine.create({ gravity: { y: 1.5 } });
-    world = engine.world;
-    runner = Runner.create();
-
-    var wrapEl = document.getElementById('wrap');
-    var W = wrapEl.offsetWidth || (window.innerWidth - 260);
-    var H = wrapEl.offsetHeight || window.innerHeight;
-
-    overlayCanvas.style.display = 'block';
-    overlayCanvas.width = W;
-    overlayCanvas.height = H;
-
-    World.add(world, [
-      Bodies.rectangle(W / 2, H + 25, W * 2, 50, { isStatic: true }),
-      Bodies.rectangle(-25, H / 2, 50, H * 2, { isStatic: true }),
-      Bodies.rectangle(W + 25, H / 2, 50, H * 2, { isStatic: true })
-    ]);
-
-    bodies = [];
-    originalPositions = [];
-
-    getPaperPaths().forEach(function(path) {
-      var bounds = path.bounds;
-      var cx = path.position.x;
-      var cy = path.position.y;
-      var w = Math.max(bounds.width, 10);
-      var h = Math.max(bounds.height, 10);
-      var origRotation = path.rotation || 0;
-      originalPositions.push({ path: path, x: cx, y: cy, rotation: origRotation });
-      var body = Bodies.rectangle(cx, cy, w, h, {
-        restitution: 0.3, friction: 0.5, frictionAir: 0.01,
-        angle: origRotation * Math.PI / 180
-      });
-      body._paperPath = path;
-      bodies.push(body);
-      World.add(world, body);
-    });
-
-    Runner.run(runner, engine);
-
-    function loop() {
-      if (!physicsActive) return;
-      bodies.forEach(function(body) {
-        var p = body._paperPath;
-        if (!p) return;
-        p.position = new paper.Point(body.position.x, body.position.y);
-        p.rotation = body.angle * 180 / Math.PI;
-      });
-      paper.view.draw();
-      animFrame = requestAnimationFrame(loop);
-    }
-    loop();
-  }
-
-  function stopPhysics() {
-    physicsActive = false;
-    btn.classList.remove('active');
-    if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
-    if (runner && window.Matter) {
-      window.Matter.Runner.stop(runner);
-      window.Matter.Engine.clear(engine);
-    }
-    originalPositions.forEach(function(orig) {
-      orig.path.position = new paper.Point(orig.x, orig.y);
-      orig.path.rotation = orig.rotation;
-    });
-    paper.view.draw();
-    overlayCanvas.style.display = 'none';
-    bodies = []; originalPositions = [];
-    engine = null; runner = null; world = null;
-  }
-})();
-</script>
 
 </body>
 </html>
