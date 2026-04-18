@@ -1525,7 +1525,7 @@ ${pathSVG}</svg>`;
 // ── Play / Pause ─────────────────────────────────────────────────────────────
 document.getElementById('btn-play').addEventListener('click', () => {
   _playing = !_playing;
-  document.getElementById('btn-play').textContent = _playing ? '⏹ stop' : '▶ play';
+  document.getElementById('btn-play').textContent = _playing ? '⏸ pause' : '▶ play';
   document.getElementById('btn-play').classList.toggle('active', _playing);
   if (_playing) {
     _animLastTime = null;

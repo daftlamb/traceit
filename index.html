@@ -16,7 +16,7 @@ body { background: #f5f2ee; font-family: sans-serif; overflow: hidden; user-sele
 #canvas-nodes { pointer-events: none; }
 #toolbar {
   position: fixed; top: 16px; left: calc((100vw - 260px) / 2); transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow-x: auto; max-width: calc(100vw - 40px);
   background: rgba(255,255,255,0.92); backdrop-filter: blur(12px);
   border: 1px solid rgba(0,0,0,0.08); border-radius: 40px;
   padding: 8px 14px; z-index: 100;
