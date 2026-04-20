@@ -46,6 +46,7 @@ let _animRaf = null;
 let _animLastTime = null;
 
 function _tickAnim(ts) {
+  if (!_playing) return;
   if (_animLastTime !== null) {
     const dt = (ts - _animLastTime) / 1000;
     const speed = parseFloat(document.getElementById('anim-speed').value) || 1;
@@ -53,7 +54,30 @@ function _tickAnim(ts) {
   }
   _animLastTime = ts;
   paper.view.draw();
-  if (_playing) _animRaf = requestAnimationFrame(_tickAnim);
+  _animRaf = requestAnimationFrame(_tickAnim);
+}
+
+function _updatePlayButton() {
+  const btn = document.getElementById('btn-play');
+  if (!btn) return;
+  btn.textContent = _playing ? 'pause' : 'play';
+  btn.setAttribute('aria-pressed', _playing ? 'true' : 'false');
+  btn.classList.toggle('active', _playing);
+}
+
+function setPlaying(nextPlaying) {
+  const shouldPlay = !!nextPlaying;
+  if (_animRaf) {
+    cancelAnimationFrame(_animRaf);
+    _animRaf = null;
+  }
+  _playing = shouldPlay;
+  _animLastTime = null;
+  _updatePlayButton();
+  if (_playing) {
+    _animRaf = requestAnimationFrame(_tickAnim);
+  }
+  paper.view.draw();
 }
 
 // Return animated value for a node param; falls back to base when not playing/looped
@@ -73,6 +97,52 @@ function lcg(seed) {
 function getSeeds(key, n) {
   const r = lcg(key.split('').reduce((a, c) => a + c.charCodeAt(0), 0));
   return Array.from({ length: n }, r);
+}
+
+function isTypingTarget(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+function dataRand(seed) {
+  const key = String(seed);
+  return lcg(key.split('').reduce((a, c) => ((a * 31) + c.charCodeAt(0)) >>> 0, 2166136261))();
+}
+
+function generatedTextForNode(n, i, seedIdx) {
+  const mode = n.dataMode || 'manual';
+  if (mode === 'manual') return null;
+  const r = dataRand(`${mode}-${seedIdx}-${i}`);
+  if (mode === 'year') return String(1980 + Math.floor(r * 70));
+  const len = Math.max(2, Math.min(12, n.dataLength || 6));
+  if (mode === 'hex') {
+    let out = '#';
+    for (let k = 0; k < len; k++) out += Math.floor(dataRand(`${seedIdx}-${i}-hex-${k}`) * 16).toString(16).toUpperCase();
+    return out;
+  }
+  let out = '';
+  for (let k = 0; k < len; k++) out += Math.floor(dataRand(`${seedIdx}-${i}-num-${k}`) * 10);
+  return out;
+}
+
+function nodeSizeAt(n, i, count) {
+  const frac = count > 1 ? i / (count - 1) : 0;
+  const sz0 = Math.max(1, _aval(n, 'size', n.size || 16, i, count));
+  const sz1 = Math.max(1, _aval(n, 'sizeEnd', n.sizeEnd !== undefined ? n.sizeEnd : n.size || 16, i, count));
+  return sz0 + (sz1 - sz0) * frac;
+}
+
+function anchorOffset(anchor, distance) {
+  if (!anchor || anchor === 'center') return { x: 0, y: 0 };
+  const map = {
+    'top-left': [-1, -1],
+    'top-right': [1, -1],
+    'bottom-left': [-1, 1],
+    'bottom-right': [1, 1],
+  };
+  const v = map[anchor] || [0, 0];
+  return { x: v[0] * distance, y: v[1] * distance };
 }
 
 function parseColor(fill) {
@@ -404,7 +474,7 @@ function renderNodes(pObj, pi) {
     const hasTilt = tilt > 0;
     const bcx = hasTilt ? pp.bounds.center.x : 0;
     const bcy = hasTilt ? pp.bounds.center.y : 0;
-    const charArr = (n.charArray || '').split('').filter(c => c.trim());
+    const charArr = Array.from(n.charArray || '').filter(c => c.trim());
     const charColors = (n.colorArray || '').split(',').map(c => c.trim()).filter(Boolean);
 
     const _animOffset = _aval(n, 'offset', n.offset || 0, 0, 1);
@@ -414,11 +484,9 @@ function renderNodes(pObj, pi) {
       const tan = pp.getTangentAt(Math.min(t, totalLen - 0.01));
       if (!pt) continue;
       const frac = count > 1 ? i / (count - 1) : 0;
-      const sz0 = Math.max(1, _aval(n, 'size', n.size || 16, i, count));
-      const sz1 = Math.max(1, _aval(n, 'sizeEnd', n.sizeEnd !== undefined ? n.sizeEnd : n.size || 16, i, count));
       const op0 = _aval(n, 'opStart', n.opStart !== undefined ? n.opStart : 1, i, count);
       const op1 = _aval(n, 'opEnd',   n.opEnd   !== undefined ? n.opEnd   : 1, i, count);
-      let size = sz0 + (sz1 - sz0) * frac;
+      let size = nodeSizeAt(n, i, count);
       const opacity = Math.max(0, Math.min(1, op0 + (op1 - op0) * frac));
       const _aj = _aval(n, 'jitter',     n.jitter     || 0, i, count);
       const _ar = _aval(n, 'rotJitter',  n.rotJitter  || 0, i, count);
@@ -451,6 +519,17 @@ function renderNodes(pObj, pi) {
         if (pt2) { nextPt = { x: pt2.x, y: pt2.y }; nextR = size; }
       }
       const seedIdx = Math.floor(seeds[i*5+4] * 9999);
+      const generatedText = generatedTextForNode(n, i, seedIdx);
+      const drawText = generatedText !== null ? generatedText : n.text;
+      const drawCharArr = generatedText !== null ? null : charArr;
+      if (rawN.parentNi !== undefined && rawN.parentNi !== null && rawN.anchor && rawN.anchor !== 'center') {
+        const parent = resolveNode(pObj, rawN.parentNi);
+        const parentSize = parent ? nodeSizeAt(parent, i, count) : size;
+        const dist = parentSize / 2 + (rawN.anchorGap !== undefined ? rawN.anchorGap : 8);
+        const ao = anchorOffset(rawN.anchor, dist);
+        px += ao.x;
+        py += ao.y;
+      }
       const _zoom = paper.view.zoom || 1;
       const risoOpts = { bristle: n.risoBristle||1, erosion: n.risoErosion||1, spread: n.risoSpread||0.38, bridge: n.risoBridge||1.4, zoom: _zoom };
       const ditherOpts = n.dither ? { dotSize: n.ditherDot||2, threshold: n.ditherThreshold||0.5, feather: n.ditherFeather||0, colorize: n.ditherColorize !== false, imgMode: n.ditherImgMode||'bayer', lineLen: n.lineLen, curvature: n.curvature, strokeWidth: n.strokeWidth||1.5, zoom: _zoom } : null;
@@ -460,10 +539,10 @@ function renderNodes(pObj, pi) {
       window._ditherCurrentIdx = i;
 
       drawShape(_nodesCtx, n.style||'flat', n.type||'circle', px, py, size,
-        n.fill||'#c8b8a2', rot, opacity, n.font, n.text,
+        n.fill||'#c8b8a2', rot, opacity, n.font, drawText,
         jx, jy, jr, js, n.strokeColor||'#1a1a1a', n.strokeWidth||0,
         n.noFill, n.noStroke, _asx, _asy,
-        n.imgEl||null, !!n.riso, nextPt, nextR, charArr, charColors, seedIdx, risoOpts, ditherOpts, n.lineLen, n.curvature);
+        n.imgEl||null, !!n.riso, nextPt, nextR, drawCharArr, charColors, seedIdx, risoOpts, ditherOpts, n.lineLen, n.curvature);
     }
     _nodesCtx.globalCompositeOperation = 'source-over';
   });
@@ -849,7 +928,8 @@ document.getElementById('btn-pen').addEventListener('click', () => setTool('pen'
 
 // space keyup
 document.addEventListener('keyup', e => {
-  if (e.code === 'Space') {
+  if (isTypingTarget(e.target)) return;
+  if (e.code === 'Space' || e.key === 'h' || e.key === 'H') {
     _spacePan = false; _panLast = null;
     _canvas.style.cursor = (activeTool === 'select') ? 'default' : 'crosshair';
   }
@@ -888,8 +968,8 @@ _canvas.addEventListener('wheel', e => {
 }, { passive: false });
 
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-  if (e.code === 'Space') {
+  if (isTypingTarget(e.target)) return;
+  if (e.code === 'Space' || e.key === 'h' || e.key === 'H') {
     e.preventDefault();
     if (!_spacePan) { _spacePan = true; _canvas.style.cursor = 'grab'; }
     return;
@@ -974,16 +1054,21 @@ function otCommandsToPaperPaths(commands) {
 
 document.getElementById('tp-add').addEventListener('click', () => {
   if (!_otFont) { alert('Font not loaded yet, please wait.'); return; }
-  const text = document.getElementById('tp-text').value.trim();
-  if (!text) return;
+  const rawText = document.getElementById('tp-text').value.replace(/\r\n?/g, '\n');
+  const lines = rawText.split('\n');
+  if (!lines.some(line => line.trim().length > 0)) return;
   const size = parseInt(document.getElementById('tp-size').value) || 120;
+  const lineHeight = size * 1.18;
 
-  // getPaths() gives one opentype Path per glyph; convert commands directly to Paper.js paths
-  const glyphPaths = _otFont.getPaths(text, 0, 0, size);
   const collected = [];
-  glyphPaths.forEach(gp => {
-    if (!gp.commands || gp.commands.length === 0) return;
-    otCommandsToPaperPaths(gp.commands).forEach(p => collected.push(p));
+  lines.forEach((line, lineIndex) => {
+    if (!line.trim()) return;
+    // getPaths() gives one opentype Path per glyph; convert commands directly to Paper.js paths.
+    const glyphPaths = _otFont.getPaths(line, 0, lineIndex * lineHeight, size);
+    glyphPaths.forEach(gp => {
+      if (!gp.commands || gp.commands.length === 0) return;
+      otCommandsToPaperPaths(gp.commands).forEach(p => collected.push(p));
+    });
   });
 
   if (collected.length === 0) return;
@@ -1093,7 +1178,8 @@ document.getElementById('btn-add-node').addEventListener('click', () => {
     opStart:1, opEnd:1, jitter:0, rotJitter:0, sizeJitter:0,
     tilt3d:0, tiltMode:'perspective', sx:100, sy:100,
     noFill:false, noStroke:true, riso:false,
-    charArray:'', colorArray:'', parentNi:null
+    charArray:'', colorArray:'', dataMode:'manual', dataLength:6,
+    anchor:'center', anchorGap:8, parentNi:null
   });
       pushHistory();
   selected = { type:'node', pi:selected.pi, ni:paths[selected.pi].nodes.length-1 };
@@ -1294,6 +1380,7 @@ function updatePanel() {
     'node-op-start','node-op-end','node-jitter','node-rot-jitter','node-size-jitter',
     'node-dither','node-linelen','node-curvature',
     'node-text','node-font','node-char-array','node-color-array',
+    'node-data-mode','node-data-len','node-anchor','node-anchor-gap',
     'node-imgarray-mode','node-imgarray-count'
   ];
   _allNodeInputs.forEach(id => {
@@ -1308,11 +1395,24 @@ function updatePanel() {
     document.getElementById('node-text-row').style.display = isText?'block':'none';
     document.getElementById('node-font-row').style.display = isText?'block':'none';
     document.getElementById('node-char-row').style.display = isText?'block':'none';
+    document.getElementById('node-data-row').style.display = isText?'block':'none';
     document.getElementById('node-color-array-row').style.display = 'block';
     document.getElementById('node-image-row').style.display = isImage?'block':'none';
     document.getElementById('node-svg-row').style.display = isSvg?'block':'none';
     if (isSvg) { document.getElementById('node-svg-name').textContent = n.svgName||'no svg loaded'; }
-    if (isText) { sv('node-text', n.text||''); sv('node-font', n.font||'sans-serif'); sv('node-char-array', n.charArray||''); sv('node-color-array', n.colorArray||''); }
+    if (isText) {
+      sv('node-text', n.text||'');
+      sv('node-font', n.font||'sans-serif');
+      sv('node-char-array', n.charArray||'');
+      sv('node-color-array', n.colorArray||'');
+      sv('node-data-mode', n.dataMode||'manual');
+      sv('node-data-len', n.dataLength||6);
+      tv('node-data-len-val', n.dataLength||6);
+      document.getElementById('node-data-len-row').style.display = (n.dataMode === 'hex' || n.dataMode === 'number') ? 'block' : 'none';
+      sv('node-anchor', n.anchor||'center');
+      sv('node-anchor-gap', n.anchorGap !== undefined ? n.anchorGap : 8);
+      tv('node-anchor-gap-val', n.anchorGap !== undefined ? n.anchorGap : 8);
+    }
     if (isImage) { document.getElementById('node-image-name').textContent = n.imgName||'no image loaded'; }
     // Feature 4: shape-specific params
     const isLine = n.type==='line', isArcCurve = n.type==='arc'||n.type==='curve';
@@ -1394,6 +1494,10 @@ bTxt('node-text',v=>{const n=gN();if(n)n.text=v;});
 bSel('node-font',v=>{const n=gN();if(n)n.font=v;});
 bTxt('node-char-array',v=>{const n=gN();if(n)n.charArray=v;});
 bTxt('node-color-array',v=>{const n=gN();if(n)n.colorArray=v;});
+bSel('node-data-mode',v=>{const n=gN();if(n)n.dataMode=v;});
+bR('node-data-len','node-data-len-val',v=>Math.round(v),v=>{const n=gN();if(n)n.dataLength=Math.round(v);});
+bSel('node-anchor',v=>{const n=gN();if(n)n.anchor=v;});
+bR('node-anchor-gap','node-anchor-gap-val',v=>Math.round(v),v=>{const n=gN();if(n)n.anchorGap=Math.round(v);});
 
 // color palette presets
 const COLOR_PALETTES = [
@@ -1524,16 +1628,7 @@ ${pathSVG}</svg>`;
 
 // ── Play / Pause ─────────────────────────────────────────────────────────────
 document.getElementById('btn-play').addEventListener('click', () => {
-  _playing = !_playing;
-  document.getElementById('btn-play').textContent = _playing ? '⏸ pause' : '▶ play';
-  document.getElementById('btn-play').classList.toggle('active', _playing);
-  if (_playing) {
-    _animLastTime = null;
-    _animRaf = requestAnimationFrame(_tickAnim);
-  } else {
-    if (_animRaf) cancelAnimationFrame(_animRaf);
-    paper.view.draw();
-  }
+  setPlaying(!_playing);
 });
 
 // ── Loop button toggle (delegated) ───────────────────────────────────────────
@@ -1573,6 +1668,10 @@ document.getElementById('btn-export-gif').addEventListener('click', () => {
 
   const frames = 24, delay = 42; // ~24fps, 1-second loop
   const savedT = _animT, savedPlaying = _playing;
+  if (_animRaf) {
+    cancelAnimationFrame(_animRaf);
+    _animRaf = null;
+  }
   _playing = true;
 
   const { GIFEncoder, quantize, applyPalette } = gifenc;
@@ -1599,9 +1698,9 @@ document.getElementById('btn-export-gif').addEventListener('click', () => {
   const a = document.createElement('a'); a.download = 'traceit.gif'; a.href = url; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-  _animT = savedT; _playing = savedPlaying;
+  _animT = savedT;
   btn.textContent = 'GIF'; btn.disabled = false;
-  paper.view.draw();
+  setPlaying(savedPlaying);
 });
 
 // Feature 1: grid toggle
@@ -1669,7 +1768,8 @@ setTimeout(() => {
     opStart:1, opEnd:1, jitter:0, rotJitter:0, sizeJitter:0,
     tilt3d:0, tiltMode:'perspective', sx:100, sy:100,
     noFill:false, noStroke:true, riso:false,
-    charArray:'', colorArray:'', parentNi:null
+    charArray:'', colorArray:'', dataMode:'manual', dataLength:6,
+    anchor:'center', anchorGap:8, parentNi:null
   });
   selected={type:'path',pi:0};
   highlightSelected(); updatePanel(); paper.view.draw();
@@ -1940,6 +2040,7 @@ let _dragPi = null;
 function buildPathList() {
   const pl = document.getElementById('path-list');
   const pc = document.getElementById('path-list-count');
+  const esc = v => String(v).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
   pl.innerHTML = '';
   pc.textContent = paths.length ? `${paths.length} path${paths.length>1?'s':''}` : '';
   paths.forEach((p, pi) => {
@@ -1949,11 +2050,12 @@ function buildPathList() {
     div.draggable = true;
     div.dataset.pi = pi;
     const nodeCount = p.nodes.length;
-    const label = `path ${pi+1}`;
+    const defaultLabel = `path ${pi+1}`;
+    const label = p.name || defaultLabel;
     div.innerHTML = `
       <span class="path-drag-handle" title="drag to reorder" style="cursor:grab;margin-right:4px;opacity:0.4;user-select:none">⠿</span>
       <span class="path-eye" data-pi="${pi}" title="toggle visibility">${p.visible===false ? '○' : '●'}</span>
-      <span class="path-lbl">${label}</span>
+      <span class="path-lbl">${esc(label)}</span>
       <span class="path-meta">${nodeCount} layer${nodeCount!==1?'s':''}</span>
     `;
     div.addEventListener('click', (e) => {
@@ -2008,7 +2110,7 @@ function buildPathList() {
       if (!lblEl) return;
       const inp = document.createElement('input');
       inp.type = 'text';
-      inp.value = p.name || label;
+      inp.value = p.name || defaultLabel;
       inp.style.cssText = 'width:80px;font-size:inherit;padding:0 2px;';
       lblEl.replaceWith(inp);
       inp.focus(); inp.select();
@@ -2031,13 +2133,6 @@ function buildPathList() {
 const _origUpdatePanelFinal = updatePanel;
 updatePanel = function() {
   _origUpdatePanelFinal();
-  buildPathList();
-};
-
-// also rebuild on path add/delete — patch paper.view.draw
-const _origDraw2 = paper.view.draw.bind(paper.view);
-paper.view.draw = function() {
-  _origDraw2();
   buildPathList();
 };
 

@@ -8,6 +8,9 @@
 <script src="https://cdn.jsdelivr.net/npm/roughjs@4.6.6/bundled/rough.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gifenc@1.0.3/dist/gifenc.umd.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600&family=Roboto:wght@400;500&family=Space+Grotesk:wght@400;600&display=swap" rel="stylesheet">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #f5f2ee; font-family: sans-serif; overflow: hidden; user-select: none; }
@@ -16,19 +19,23 @@ body { background: #f5f2ee; font-family: sans-serif; overflow: hidden; user-sele
 #canvas-nodes { pointer-events: none; }
 #toolbar {
   position: fixed; top: 16px; left: calc((100vw - 260px) / 2); transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; overflow-x: auto; max-width: calc(100vw - 40px);
+  display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; white-space: nowrap;
+  overflow-x: auto; max-width: calc(100vw - 40px); scrollbar-width: none;
   background: rgba(255,255,255,0.92); backdrop-filter: blur(12px);
   border: 1px solid rgba(0,0,0,0.08); border-radius: 40px;
   padding: 8px 14px; z-index: 100;
 }
-#toolbar h2 { font-size: 15px; font-weight: 400; color: #1a1a1a; letter-spacing: -0.3px; }
+#toolbar::-webkit-scrollbar { display: none; }
+#toolbar h2 { font-size: 15px; font-weight: 400; color: #1a1a1a; letter-spacing: -0.3px; flex: 0 0 auto; white-space: nowrap; }
 .sep { color: rgba(0,0,0,0.2); font-size: 12px; }
 .tb-btn {
   background: none; border: 1px solid rgba(0,0,0,0.1); color: rgba(0,0,0,0.5);
   padding: 4px 12px; border-radius: 20px; cursor: pointer; font-size: 11px; transition: all 0.15s;
+  flex: 0 0 auto; white-space: nowrap; line-height: 1.2;
 }
 .tb-btn:hover { background: rgba(0,0,0,0.05); }
 .tb-btn.active { background: #1a1a1a; color: #f5f2ee; border-color: #1a1a1a; }
+#btn-play { min-width: 58px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
 #panel {
   position: fixed; right: 0; top: 0; bottom: 0; width: 260px;
   background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
@@ -45,10 +52,11 @@ body { background: #f5f2ee; font-family: sans-serif; overflow: hidden; user-sele
 .prop-label { font-size: 10px; color: rgba(0,0,0,0.4); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 5px; display: flex; justify-content: space-between; }
 .prop-val { color: rgba(0,0,0,0.35); }
 input[type=range] { width: 100%; accent-color: #1a1a1a; }
-input[type=text], select {
+input[type=text], textarea, select {
   width: 100%; padding: 6px 10px; border: 1px solid rgba(0,0,0,0.1);
   border-radius: 8px; font-size: 12px; background: #f5f2ee; color: #1a1a1a; outline: none;
 }
+textarea { resize: vertical; min-height: 34px; line-height: 1.35; }
 input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px; cursor: pointer; padding: 0; }
 .row-inline { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; }
 .row-inline label { font-size: 11px; color: rgba(0,0,0,0.5); flex: 1; }
@@ -115,7 +123,7 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
   display: none; flex-direction: column; gap: 8px; min-width: 280px;
 }
 #text-path-popover.open { display: flex; }
-#text-path-popover input[type=text] { flex: 1; padding: 6px 10px; border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; font-size: 14px; font-family: 'Outfit', sans-serif; background: #f5f2ee; color: #1a1a1a; outline: none; }
+#text-path-popover textarea { flex: 1; padding: 6px 10px; border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; font-size: 14px; font-family: 'Outfit', sans-serif; background: #f5f2ee; color: #1a1a1a; outline: none; min-height: 64px; }
 #text-path-popover .tp-row { display: flex; align-items: center; gap: 8px; }
 #text-path-popover label { font-size: 10px; color: rgba(0,0,0,0.4); text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
 #text-path-popover button { padding: 6px 14px; border-radius: 8px; border: none; background: #1a1a1a; color: #f5f2ee; font-size: 12px; cursor: pointer; }
@@ -139,12 +147,12 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
     <button class="ab-preset" data-w="800" data-h="600" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,0,0,0.12);background:none;font-size:10px;cursor:pointer;color:rgba(0,0,0,0.5)">800×600</button>
     <button class="ab-preset" data-w="1240" data-h="1754" style="padding:4px 8px;border-radius:6px;border:1px solid rgba(0,0,0,0.12);background:none;font-size:10px;cursor:pointer;color:rgba(0,0,0,0.5)">A4</button>
   </div>
-  <div style="font-size:10px;color:rgba(0,0,0,0.3)">space + drag to pan · scroll to zoom</div>
+  <div style="font-size:10px;color:rgba(0,0,0,0.3)">space / h + drag to pan · scroll to zoom</div>
 </div>
 
 <div id="text-path-popover">
   <div class="tp-row">
-    <input type="text" id="tp-text" placeholder="type something…" autocomplete="off">
+    <textarea id="tp-text" placeholder="type something…&#10;line breaks are supported" autocomplete="off"></textarea>
     <button id="tp-add">add</button>
   </div>
   <div class="tp-row">
@@ -190,8 +198,8 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
   <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(0,0,0,0.4);cursor:pointer"><input type="checkbox" id="chk-artboard"> show</label>
   <span id="zoom-indicator" style="font-size:11px;color:rgba(0,0,0,0.35);min-width:34px;text-align:right">100%</span>
   <span class="sep">·</span>
-  <button class="tb-btn" id="btn-play">▶ play</button>
-  <input type="range" id="anim-speed" min="0.1" max="4" step="0.1" value="1" title="speed" style="width:60px;accent-color:#1a1a1a">
+  <button class="tb-btn" id="btn-play" aria-pressed="false">play</button>
+  <input type="range" id="anim-speed" min="0.1" max="4" step="0.1" value="1" title="speed" style="width:60px;accent-color:#1a1a1a;flex:0 0 60px">
   <button class="tb-btn" id="btn-export-gif">GIF</button>
 </div>
 
@@ -409,14 +417,48 @@ input[type=color] { width: 32px; height: 28px; border: none; border-radius: 6px;
           <input type="text" id="node-char-array" placeholder="e.g. 1234 or ABCD">
           <div class="hint-text">each node picks a random char</div>
         </div>
+        <div id="node-data-row" style="display:none">
+          <div class="prop-row">
+            <div class="prop-label">data text</div>
+            <select id="node-data-mode">
+              <option value="manual">manual text / char array</option>
+              <option value="year">random year</option>
+              <option value="hex">random hex</option>
+              <option value="number">random number</option>
+            </select>
+          </div>
+          <div class="prop-row" id="node-data-len-row" style="display:none">
+            <div class="prop-label">data length <span class="prop-val" id="node-data-len-val">6</span></div>
+            <input type="range" id="node-data-len" min="2" max="12" step="1" value="6">
+          </div>
+          <div class="prop-row">
+            <div class="prop-label">attach position</div>
+            <select id="node-anchor">
+              <option value="center">center</option>
+              <option value="top-left">top left</option>
+              <option value="top-right">top right</option>
+              <option value="bottom-left">bottom left</option>
+              <option value="bottom-right">bottom right</option>
+            </select>
+          </div>
+          <div class="prop-row">
+            <div class="prop-label">attach gap <span class="prop-val" id="node-anchor-gap-val">8</span></div>
+            <input type="range" id="node-anchor-gap" min="0" max="80" step="1" value="8">
+          </div>
+        </div>
 
         <div id="node-font-row" class="prop-row" style="display:none">
           <div class="prop-label">font</div>
           <select id="node-font">
             <option value="sans-serif">sans-serif</option>
+            <option value="'Outfit', sans-serif">Outfit</option>
+            <option value="'Roboto', sans-serif">Roboto</option>
+            <option value="'Inter', sans-serif">Inter</option>
+            <option value="'Space Grotesk', sans-serif">Space Grotesk</option>
+            <option value="'IBM Plex Mono', monospace">IBM Plex Mono</option>
+            <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
             <option value="serif">serif</option>
             <option value="monospace">monospace</option>
-            <option value="Georgia">Georgia</option>
           </select>
         </div>
         <div id="node-image-row" style="display:none;margin-bottom:13px">
